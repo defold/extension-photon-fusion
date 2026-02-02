@@ -1,0 +1,90 @@
+local log = require("example.utils.log")
+
+local function wait_until(fn)
+	local co = coroutine.running()
+	assert(co, "You must call this from within a coroutine")
+	local wait = true
+	timer.delay(0, true, function(self, handle, time_elapsed)
+		if fn() then
+			wait = false
+			timer.cancel(handle)
+		end
+		local ok, err = coroutine.resume(co)
+		if not ok then
+			log(err)
+			timer.cancel(handle)
+		end
+	end)
+	while wait do
+		coroutine.yield()
+	end
+end
+
+local function wait(seconds)
+	local co = coroutine.running()
+	assert(co, "You must call this from within a coroutine")
+	timer.delay(seconds, false, function(self, handle, time_elapsed)
+		local ok, err = coroutine.resume(co)
+		if not ok then
+			log(err)
+		end
+	end)
+	coroutine.yield()
+end
+
+local function connect(region, userid, server)
+	region = region or "eu"
+	userid = userid or ("user" .. math.random(999999))
+	server = server or ""
+	log("connect region: '%s' userid: '%s' server: '%s'", region, userid, server)
+	fusion.connect(region, userid, server)
+	wait_until(function()
+		return fusion.is_connected()
+	end)
+end
+
+local function join_room(name)
+	name = name or "foo"
+	log("join_room name: '%s'", name)
+	fusion.join_or_create_room_random(name)
+	wait_until(function()
+		return fusion.is_in_room()
+	end)
+end
+
+local function start_game()
+	log("start game")
+	local pos = vmath.vector3(math.random(5), 0, math.random(5))
+	factory.create("#playerfactory", pos)
+end
+
+function init(self)
+	msg.post(".", "acquire_input_focus")
+	sys.set_error_handler(function(source, message, traceback)
+		log("ERROR: (%s) %s %s", source, message, traceback)
+	end)
+	local index = sys.get_config_int("project.instance_index", 1)
+	log(index)
+	math.randomseed(os.time() + index)
+	pprint(fusion)
+	coroutine.wrap(function()
+		local appid = "98c13f6b-d277-4a55-b9a9-24373e392d21"
+		local appversion = "1.0"
+		fusion.init(appid, appversion)
+		--fusion.enable_debug(true)
+		connect()
+		if index > 1 then
+			wait(1)
+		end
+		join_room()
+		start_game()
+		print("GAME STARTED")
+	end)()
+end
+
+
+function on_input(self, action_id, action)
+	if action.released and action_id == hash("toggle_debug") then
+		msg.post("@system:", "toggle_physics_debug")
+	end
+end

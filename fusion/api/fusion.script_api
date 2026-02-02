@@ -1,0 +1,73 @@
+- name: fusion
+  type: table
+  desc: Functions and constants for interacting with Photon Fusion
+
+  members:
+  - name: init
+    type: function
+    desc: Initialize Fusion. 
+    parameters:
+    - name: app_id
+      type: string
+    - name: app_version
+      type: string
+
+  - name: connect
+    type: function
+    desc: Connect Fusion. 
+    parameters:
+    - name: region
+      type: string
+    - name: user
+      type: string
+    - name: server
+      type: string
+
+  - name: join_room_random
+    type: function
+    desc: Join random room. 
+
+  - name: is_connected
+    type: function
+    desc: Check if Fusion connected. 
+    returns:
+    - name: connected
+      type: boolean
+
+  - name: is_running
+    type: function
+    desc: Check if Fusion is running. 
+    returns:
+    - name: running
+      type: boolean
+
+  - name: is_in_room
+    type: function
+    desc: Check if Fusion is in a room. 
+    returns:
+    - name: in_room
+      type: boolean
+
+  - name: is_joining_or_in_room
+    type: function
+    desc: Check if Fusion is joining or in a room. 
+    returns:
+    - name: running
+      type: boolean
+
+  - name: enable_debugging
+    type: function
+    desc: Enable/disable debugging. 
+    parameters:
+    - name: enable
+      type: boolean
+
+  - name: register
+    type: function
+    desc: Register an object. 
+    parameters:
+    - name: id
+      type: string
+    - name: scene
+      type: number
+

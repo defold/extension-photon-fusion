@@ -1,0 +1,9 @@
+local log = require("example.utils.log")
+
+function update(self, dt)
+	local text = ""
+	for s in log.latest() do
+		text = text .. s .. "\n"
+	end
+	gui.set_text(gui.get_node("log"), text)
+end

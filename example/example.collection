@@ -1,0 +1,45 @@
+name: "example"
+collection_instances {
+  id: "level"
+  collection: "/example/level.collection"
+  position {
+    z: 8.0
+  }
+}
+scale_along_z: 0
+embedded_instances {
+  id: "game"
+  data: "components {\n"
+  "  id: \"lobby\"\n"
+  "  component: \"/example/lobby.script\"\n"
+  "}\n"
+  "embedded_components {\n"
+  "  id: \"playerfactory\"\n"
+  "  type: \"factory\"\n"
+  "  data: \"prototype: \\\"/example/player.go\\\"\\n"
+  "\"\n"
+  "}\n"
+  ""
+}
+embedded_instances {
+  id: "camera"
+  data: "embedded_components {\n"
+  "  id: \"camera\"\n"
+  "  type: \"camera\"\n"
+  "  data: \"aspect_ratio: 1.0\\n"
+  "fov: 0.7854\\n"
+  "near_z: 0.1\\n"
+  "far_z: 1000.0\\n"
+  "auto_aspect_ratio: 1\\n"
+  "\"\n"
+  "}\n"
+  ""
+  position {
+    y: 24.0
+    z: 27.0
+  }
+  rotation {
+    x: -0.33478048
+    w: 0.94229615
+  }
+}

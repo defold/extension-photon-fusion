@@ -1,0 +1,32 @@
+name: "Fusion"
+
+platforms:
+
+    osx:
+        context:
+            defines:  ["_EG_IMAC_PLATFORM"]
+            frameworks: ["CFNetwork", "CoreFoundation", "Foundation", "Security"]
+            weakFrameworks: []
+            flags:    ["-std=c++17"]
+    ios:
+        context:
+            defines:  ["_EG_IPHONE_PLATFORM"]
+            frameworks: ["CFNetwork", "CoreFoundation", "Foundation", "Security"]
+            weakFrameworks: []
+            flags:    ["-std=c++17"]
+    win32:
+        context:
+            defines:  ["_EG_WINDOWS_PLATFORM"]
+            flags:    ["-std=c++17"]
+    android:
+        context:
+            defines:  ["_EG_ANDROID_PLATFORM"]
+            flags:    ["-std=c++17", "-fno-exceptions", "-fno-rtti"]
+    linux:
+        context:
+            defines:  ["_EG_LINUX_PLATFORM"]
+            flags:    ["-std=c++17"]
+    web:
+        context:
+            defines:  ["_EG_EMSCRIPTEN_PLATFORM"]
+            flags:    ["-std=c++17"]
