@@ -10,29 +10,30 @@
 #include "StringHeap.h"
 
 namespace SharedMode {
-    struct InterestVector {
+    struct AOILocation {
         int32_t X{0};
         int32_t Y{0};
         int32_t Z{0};
 
-        InterestVector() = default;
+        AOILocation() = default;
 
-        InterestVector(const int32_t x, const int32_t y, const int32_t z) : X(x), Y(y), Z(z) {
+        AOILocation(const int32_t x, const int32_t y, const int32_t z) : X(x), Y(y), Z(z) {
         }
+
+        AOILocation GetNeighbour(int32_t xOffset = 0, int32_t yOffset = 0, int32_t zOffset = 0);
     };
 
     struct InterestBox {
-        InterestVector Center;
-        InterestVector Extents;
+        AOILocation Center{};
+        AOILocation Extents{};
 
         InterestBox() = default;
 
-        InterestBox(const InterestVector center, const InterestVector extents) {
+        InterestBox(const AOILocation center, const AOILocation extents) {
             Center = center;
             Extents = extents;
         }
     };
-
 
     constexpr int32_t OBJECT_STATUS_NEW = 0;
     constexpr int32_t OBJECT_STATUS_PENDING = 1;
@@ -119,15 +120,51 @@ namespace SharedMode {
         WantOwner = 1,
     };
 
+    enum class ObjectSpecialFlags : uint8_t {
+        None = 0,
+        IsRootTransform = 1 << 1,
+        IgnoreRootTransformProperties = 1 << 2,
+    };
+
+    inline ObjectSpecialFlags operator&(ObjectSpecialFlags a, ObjectSpecialFlags b)
+    {
+        return static_cast<ObjectSpecialFlags>(
+            static_cast<uint8_t>(a) & static_cast<uint8_t>(b)
+        );
+    }
+
+    inline ObjectSpecialFlags operator|(ObjectSpecialFlags a, ObjectSpecialFlags b)
+    {
+        return static_cast<ObjectSpecialFlags>(
+            static_cast<uint8_t>(a) | static_cast<uint8_t>(b)
+        );
+    }
+
+    inline ObjectSpecialFlags& operator|=(ObjectSpecialFlags& a, ObjectSpecialFlags b)
+    {
+        a = a | b;
+        return a;
+    }
+
     struct ObjectFlags {
         union {
             uint32_t _packed;
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4201)
+#endif
 
             struct {
                 ObjectSettingsFlags SettingsFlags;
                 ObjectOwnerModes OwnerMode;
                 ObjectInterestModes InterestMode;
             };
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
         };
 
         explicit ObjectFlags(uint32_t packed);
@@ -145,20 +182,23 @@ namespace SharedMode {
     };
 
     struct ObjectTail {
-        int32_t AreaOfInterestX;
-        int32_t AreaOfInterestY;
-        int32_t AreaOfInterestZ;
+        int32_t AOI_X;
+        int32_t AOI_Y;
+        int32_t AOI_Z;
+        int32_t AOI_SET;
         int32_t Destroyed;
         int32_t Dummy;
     };
 
+    static_assert(std::is_trivially_copyable<ObjectTail>());
     static_assert(alignof(ObjectTail) == 4);
-    static_assert(sizeof(ObjectTail) == 20);
-    static_assert(offsetof(ObjectTail, AreaOfInterestX) == 0);
-    static_assert(offsetof(ObjectTail, AreaOfInterestY) == 4);
-    static_assert(offsetof(ObjectTail, AreaOfInterestZ) == 8);
-    static_assert(offsetof(ObjectTail, Destroyed) == 12);
-    static_assert(offsetof(ObjectTail, Dummy) == 16);
+    static_assert(sizeof(ObjectTail) == 24);
+    static_assert(offsetof(ObjectTail, AOI_X) == 0);
+    static_assert(offsetof(ObjectTail, AOI_Y) == 4);
+    static_assert(offsetof(ObjectTail, AOI_Z) == 8);
+    static_assert(offsetof(ObjectTail, AOI_SET) == 12);
+    static_assert(offsetof(ObjectTail, Destroyed) == 16);
+    static_assert(offsetof(ObjectTail, Dummy) == 20);
 
     enum class ObjectType : uint8_t {
         Base = 1,
@@ -180,15 +220,15 @@ namespace SharedMode {
 
         bool CreatedLocal{false};
         bool ReceivedPluginUpdate{false};
+        bool SendUpdates{true};
 
-        BufferT<Word> Shadow{};
         BufferT<Tick> Ticks{};
 
     protected:
         Client *Client;
 
     public:
-        static constexpr size_t ExtraTailWords = 5;
+        static constexpr size_t ExtraTailWords = sizeof(ObjectTail) / 4;
         static constexpr double DynamicOwnerCooldownTime = 1.0 / 3;
 
         explicit Object(SharedMode::Client *client) : Client(client) {
@@ -200,20 +240,30 @@ namespace SharedMode {
         bool HasValidData{false};
         Data Header{};
         TypeRef Type{};
+
+        BufferT<Word> Shadow{};
         BufferT<Word> Words{};
-        bool IgnoreProperties{false};
+
+        ObjectSpecialFlags SpecialFlags{};
+
 
         virtual ~Object() = default;
 
         void SetHasValidData(const bool hasValidData) { HasValidData = hasValidData; }
 
+        void SetSendUpdates(bool sendUpdates) { SendUpdates = sendUpdates; }
+
         virtual ObjectRoot *Root() = 0;
 
-        StringHandle AddString(const wchar_t *str);
+        StringHandle AddString(const CharType *str);
 
-        const wchar_t *ResolveString(const StringHandle &handle);
+        const CharType* ResolveString(const StringHandle& handle, StringMessage& OutStatus);
 
         StringHandle FreeString(const StringHandle &handle);
+
+        uint32_t GetStringLength(const StringHandle &handle);
+
+        void LogStringData(const StringHandle &handle);
     };
 
     class ObjectChild final : public Object {
@@ -316,6 +366,12 @@ namespace SharedMode {
 
     struct SdkVersion {
         union {
+            
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4201)
+#endif
+
             struct {
                 int32_t Major;
                 int32_t Minor;
@@ -323,6 +379,10 @@ namespace SharedMode {
                 int32_t Build;
                 int32_t Protocol;
             };
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
             unsigned char _packed[20];
         };

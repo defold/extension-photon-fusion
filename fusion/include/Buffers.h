@@ -5,6 +5,7 @@
 
 #include "Misc.h"
 #include "Aliases.h"
+#include <optional>
 
 namespace SharedMode {
 	class WriteBuffer;
@@ -72,7 +73,7 @@ namespace SharedMode {
 
 		bool Bool() { return Byte() == 1; }
 
-		PlayerId Player() { return IntVar(); }
+		PlayerId Player() { return UIntVar(); }
 
 		void Versions(int32_t &plugin_version, int32_t &client_version);
 
@@ -133,7 +134,7 @@ namespace SharedMode {
 			UIntVar(id.Counter);
 		}
 
-		void Player(const PlayerId id) { IntVar(id); }
+		void Player(const PlayerId id) { UIntVar(id); }
 
 		WriteFlags Flags() {
 			const auto offset = Use(1);

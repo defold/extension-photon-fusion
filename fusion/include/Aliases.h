@@ -4,7 +4,7 @@
 #define SHAREDCLIENT_ALIASES_H
 
 #include <cstdint>
-#include <string>
+#include "StringType.h"
 
 namespace SharedMode {
 	struct TypeRef {
@@ -13,13 +13,13 @@ namespace SharedMode {
 	};
 
 	typedef uint32_t Tick;
-	typedef int32_t PlayerId;
+	typedef uint32_t PlayerId;
 
 	typedef int32_t Word;
 
-	constexpr PlayerId MasterClientPlayerId = -1;
-	constexpr PlayerId PluginPlayerId = -2;
-	constexpr PlayerId ObjectOwnerPlayerId = -3;
+	constexpr PlayerId MasterClientPlayerId = 0xFFFFFFFF;     // UINT32_MAX
+	constexpr PlayerId PluginPlayerId = 0xFFFFFFFF - 1;       // UINT32_MAX - 1
+	constexpr PlayerId ObjectOwnerPlayerId = 0xFFFFFFFF - 2;  // UINT32_MAX - 2
 
 	struct ObjectId {
 		PlayerId Origin{0};
@@ -48,9 +48,7 @@ namespace SharedMode {
 			return Origin != other.Origin || Counter != other.Counter;
 		}
 
-		operator std::wstring() const;
-
-		operator std::string() const;
+		operator StringType() const;
 
 		operator uint64_t() const;
 	};

@@ -7,6 +7,8 @@
 // ReSharper disable once CppUnusedIncludeDirective
 #include <cstddef>
 
+#include "StringType.h"
+
 namespace SharedMode::Logging {
     enum LogLevel : uint8_t {
         Trace = 1 << 0,
@@ -16,7 +18,7 @@ namespace SharedMode::Logging {
         Error = 1 << 4
     };
 
-    bool TryGetLogLevelFromString(const wchar_t *logLevelString, LogLevel &outLogLevel);
+    bool TryGetLogLevelFromString(const CharType *logLevelString, LogLevel &outLogLevel);
 
     void SetLogLevelsFromBitmask(uint8_t logLevelMask);
 
@@ -37,7 +39,7 @@ namespace SharedMode::Logging {
 
     size_t LogOutputCount();
 
-    void Log(LogLevel logLevel, const wchar_t *Log);
+    void Log(LogLevel logLevel, const CharType* Log);
 }
 
 #endif // SHAREDCLIENT_LOGUTILS_C

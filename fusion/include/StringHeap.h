@@ -10,13 +10,20 @@
 #include <optional>
 #include <set>
 #include "Buffers.h"
+#include "StringType.h"
 
 namespace SharedMode
 {
-    static constexpr const wchar_t* ERR_NOT_ALIVE_ENTRY   = L"\xFFFF ERR_NOT_ALIVE_ENTRY";
-    static constexpr const wchar_t* ERR_WRONG_GENERATION   = L"\xFFFE ERR_WRONG_GENERATION";
-    static constexpr const wchar_t* ERR_OUT_OF_RANGE = L"\xFFFD ERR_OUT_OF_RANGE";
-    static constexpr const wchar_t* ERR_WRONG_SIZE = L"\xFFFC ERR_WRONG_SIZE";
+
+    enum class StringMessage {
+        Valid = 0,
+        NotALiveEntry = 1,
+        WrongGeneration = 2,
+        OutOfRange = 3,
+        WrongSize = 4,
+        EmptyString = 5,
+        InvalidHandle = 6,
+    };
 
     static constexpr uint32_t HEAP_BUFFER_PADDING = 256;
 
@@ -60,8 +67,8 @@ namespace SharedMode
 
         std::set<uint32_t, std::greater<uint32_t>> free_ids;  // Sorted based on index, lowest index at the end (the one we grab)
 
-        BufferT<uint16_t> StringData{};
-        BufferT<uint16_t> Shadow{};
+        BufferT<CharType> StringData{};
+        BufferT<CharType> Shadow{};
         BufferT<Tick> Ticks{};
 
         uint32_t HeapSize = 0;
@@ -83,11 +90,14 @@ namespace SharedMode
 
         void Resize(uint32_t size);
 
-        StringHandle allocate_string(const wchar_t* str);
+        StringHandle allocate_string(const CharType* str);
 
-        const wchar_t* resolve_string(const StringHandle &h);
+        const CharType* resolve_string(const StringHandle& h, StringMessage& OutStatus);
 
-        StringHandle free_handle(const StringHandle &h);
+        StringHandle free_handle(const StringHandle& h);
+
+        uint32_t GetStringLength(const StringHandle& h);
+        void LogStringData(const StringHandle& h);
 
         void compact_heap();
 
@@ -95,8 +105,6 @@ namespace SharedMode
         uint64_t find_free_or_append(uint32_t size);
 
         void coalesce_free();
-
-        std::vector<wchar_t> conversionBuffer; // Used to hold conversions between utf16 and utf32 (wchar_t on none windows platforms)
     };
 }
 

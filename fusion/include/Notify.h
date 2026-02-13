@@ -6,6 +6,7 @@
 #include "Photon.h"
 #include "Misc.h"
 #include <cstdint>
+#include <optional>
 
 namespace SharedMode {
 	class Client;

@@ -3,18 +3,18 @@
 #ifndef SHAREDCLIENT_MISC_C
 #define SHAREDCLIENT_MISC_C
 
-#include "json.hpp"
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <string>
 #include <cstdarg>
 #include <memory>
 
+#include "StringType.h"
+
 using namespace std::chrono;
 
 namespace SharedMode {
-    using json = nlohmann::json;
-
 
     std::string stringf(const char *format, ...);
 
@@ -89,7 +89,7 @@ namespace SharedMode {
             Resize(length);
         }
 
-        explicit Data(const char *ptr, const size_t length) {
+        explicit Data(const CharType* ptr, const size_t length) {
             if (ptr != nullptr) {
                 Ptr = new uint8_t[length]{};
                 Length = length;
@@ -158,27 +158,6 @@ namespace SharedMode {
         operator bool() const {
             return Ptr != nullptr && Length > 0;
         }
-    };
-
-    class Configuration {
-        json _json{};
-
-    public:
-        void SetDouble(const std::string &name, double value);
-
-        void SetString(const std::string &name, std::string value);
-
-        void SetBool(const std::string &name, bool value);
-
-        void SetObject(const std::string &name, const Configuration &config);
-
-        double GetDouble(std::string name, double orDefault = 0) const;
-
-        std::string GetString(std::string name, const std::string &orDefault) const;
-
-        bool GetBool(std::string name, bool orDefault = false) const;
-
-        void GetObject(const std::string &name, Configuration &config);
     };
 
     class TimerDelta {

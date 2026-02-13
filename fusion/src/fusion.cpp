@@ -13,8 +13,11 @@
 #endif
 
 #include <dmsdk/sdk.h>
+#include <dmsdk/gamesys/components/comp_model.h>
 #include <dmsdk/gamesys/components/comp_factory.h>
+#include <dmsdk/gamesys/resources/res_model.h>
 #include <dmsdk/gameobject/gameobject_props.h>
+#include <dmsdk/rig/rig.h>
 
 #include "photon_extension_defines.h"
 
@@ -32,35 +35,29 @@ class FusionDefoldLogOutput : public SharedMode::Logging::LogOutput
 public:
     FusionDefoldLogOutput() {}
     ~FusionDefoldLogOutput() {};
-    char buffer[2000];
-    void LogTrace(const wchar_t* message)
+    void LogTrace(const SharedMode::CharType* message)
     {
-        wcstombs(buffer, message, 2000);
-        dmLogDebug("%s", buffer);
+        dmLogDebug("%s", (char*)message);
     }
 
-    void LogDebug(const wchar_t* message)
+    void LogDebug(const SharedMode::CharType* message)
     {
-        wcstombs(buffer, message, 2000);
-        dmLogDebug("%s", buffer);
+        dmLogDebug("%s", (char*)message);
     }
 
-    void LogInfo(const wchar_t* message)
+    void LogInfo(const SharedMode::CharType* message)
     {
-        wcstombs(buffer, message, 2000);
-        dmLogInfo("%s", buffer);
+        dmLogInfo("%s", (char*)message);
     }
 
-    void LogWarning(const wchar_t* message)
+    void LogWarning(const SharedMode::CharType* message)
     {
-        wcstombs(buffer, message, 2000);
-        dmLogWarning("%s", buffer);
+        dmLogWarning("%s", (char*)message);
     }
 
-    void LogError(const wchar_t* message)
+    void LogError(const SharedMode::CharType* message)
     {
-        wcstombs(buffer, message, 2000);
-        dmLogError("%s", buffer);
+        dmLogError("%s", (char*)message);
     }
 };
 
@@ -85,6 +82,10 @@ struct FusionCtx
     FusionDefoldLogOutput*                         m_FusionDefoldLogOutput;
     FusionUpdateFn                                 m_UpdateFn;
 
+    uint32_t                                       m_Scriptc;
+    uint32_t                                       m_Spritec;
+    uint32_t                                       m_Modelc;
+
     FusionCtx()
     {
         memset((void*)this, 0, sizeof(*this));
@@ -100,12 +101,19 @@ FusionCtx* g_Ctx = 0;
 
 static int32_t CompressFloat(float f)
 {
-    return *(uint32_t*)&f;
+    int32_t result;
+    memcpy(&result, &f, sizeof(float));
+    return result;
+    // return *(uint32_t*)&f;
 }
 static float DecompressFloat(int32_t f)
 {
-    return *(float*)&f;
+    float result;
+    memcpy(&result, &f, sizeof(float));
+    return result;
+    // return *(float*)&f;
 }
+
 static size_t PushFloat(SharedMode::Word* words, float f)
 {
     words[0] = CompressFloat(f);
@@ -172,16 +180,18 @@ static size_t PopUint32(SharedMode::Word* words, uint32_t* out)
 }
 static size_t PushHash(SharedMode::Word* words, dmhash_t h)
 {
-    words[0] = (uint32_t)((h & 0xFFFFFFFF00000000) >> 32);
-    words[1] = (uint32_t)((h & 0x00000000FFFFFFFF) >> 0);
+    int32_t high = (int32_t)((h >> 32) & 0xFFFFFFFFu);
+    int32_t low = (int32_t)(h & 0xFFFFFFFFu);
+    words[0] = high;
+    words[1] = low;
     return 2;
 }
 static size_t PopHash(SharedMode::Word* words, dmhash_t* out)
 {
-    *out = (dmhash_t)(
-        ((uint64_t)words[0]) << 32 |
-        ((uint64_t)words[1]) << 0
-        );
+    uint64_t high = (uint32_t)(words[0]);
+    uint64_t low  = (uint32_t)(words[1]);
+    dmhash_t h = (dmhash_t)((high << 32) | low);
+    *out = h;
     return 2;
 }
 
@@ -401,9 +411,6 @@ void Fusion_TickBeforeFrameEnd()
 {
     dmLogInfo("TickBeforeFrameEnd");
 
-    const uint32_t scriptc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("scriptc"));
-    const uint32_t spritec = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("spritec"));
-    const uint32_t modelc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("modelc"));
 
     dmHashTable<dmhash_t, SharedMode::ObjectRoot*>::Iterator iter = g_Ctx->m_FusionLocalObjects.GetIterator();
     while(iter.Next())
@@ -432,18 +439,43 @@ void Fusion_TickBeforeFrameEnd()
         header_offset += PopHash(header + header_offset, &fragment);
         uint16_t component_count;
         header_offset += PopUint16(header + header_offset, &component_count);
-        dmLogInfo("object %s:%s#%s has %d components", dmHashReverseSafe64(socket), dmHashReverseSafe64(path), dmHashReverseSafe64(fragment), component_count);
+        // dmLogInfo("object %s:%s#%s has %d components", dmHashReverseSafe64(socket), dmHashReverseSafe64(path), dmHashReverseSafe64(fragment), component_count);
         for (int i = 0; i < component_count; i++)
         {
             dmhash_t component_id;
-            uint32_t component_type;
             header_offset += PopHash(header + header_offset, &component_id);
-            header_offset += PopUint32(header + header_offset, &component_type);
-            dmLogInfo("  component %d with id %s has type %d", i, dmHashReverseSafe64(component_id), component_type);
 
-            if (component_type == spritec)
+            uint32_t component_type;
+            dmGameObject::HComponent component;
+            dmGameObject::HComponentWorld world;
+            dmGameObject::Result r = dmGameObject::GetComponent(instance, component_id, &component_type, &component, &world);
+            if (dmGameObject::RESULT_OK != r)
             {
+                dmLogError("Unable to get component with id '%s'", dmHashReverseSafe64(component_id));
+                continue;
+            }
+            // dmLogInfo("  component %d with id %s has type %d", i, dmHashReverseSafe64(component_id), component_type);
 
+            if (component_type == g_Ctx->m_Spritec)
+            {
+                dmhash_t animation;
+                float cursor;
+                dmGameObject::GetPropertyAsHash(instance, component_id, dmHashString64("animation"), &animation);
+                dmGameObject::GetPropertyAsFloat(instance, component_id, dmHashString64("cursor"), &cursor);
+
+                word_offset += PushHash(words + word_offset, animation);
+                word_offset += PushFloat(words + word_offset, cursor);
+            }
+            else if (component_type == g_Ctx->m_Modelc)
+            {
+                dmhash_t animation;
+                float cursor;
+                dmGameObject::GetPropertyAsHash(instance, component_id, dmHashString64("animation"), &animation);
+                dmGameObject::GetPropertyAsFloat(instance, component_id, dmHashString64("cursor"), &cursor);
+                // dmLogInfo("    send model animation %s", dmHashReverseSafe64(animation));
+                // dmLogInfo("    send model animation cursor %f", cursor);
+                word_offset += PushHash(words + word_offset, animation);
+                word_offset += PushFloat(words + word_offset, cursor);
             }
         }
     }
@@ -460,6 +492,7 @@ dmVMath::Point3 LerpPoint(float t, dmVMath::Point3 a, dmVMath::Point3 b)
         a.getY() + (b.getY() - a.getY()) * t,
         a.getZ() + (b.getZ() - a.getZ()) * t);
 }
+static uint32_t foo = 0;
 void Fusion_TickAfterFrameBegin(double dt)
 {
     // TODO Respect object->IgnoreProperties?
@@ -467,11 +500,13 @@ void Fusion_TickAfterFrameBegin(double dt)
     dmHashTable<dmhash_t, FusionRemoteObject*>::Iterator iter = g_Ctx->m_FusionRemoteObjects.GetIterator();
     while(iter.Next())
     {
-        dmhash_t id = iter.GetKey();
-        dmLogInfo("Fusion_TickAfterFrameBegin %s", dmHashReverseSafe64(id));
-        dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_MainCollection, id);
         FusionRemoteObject* remote_object = iter.GetValue();
         SharedMode::ObjectRoot* object = remote_object->m_SharedObject;
+
+        // if (!g_Ctx->m_FusionClient->HasBeenUpdatedByPlugin(object))
+        // {
+        //     continue;
+        // }
 
         SharedMode::Word *words = object->Words.Ptr;
         if (words == 0x0)
@@ -480,9 +515,16 @@ void Fusion_TickAfterFrameBegin(double dt)
         }
         size_t word_offset = 0;
 
+        dmhash_t id = iter.GetKey();
+        dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_MainCollection, id);
+        if (!instance)
+        {
+            dmLogWarning("Fusion_TickAfterFrameBegin unable to find object with id %s", dmHashReverseSafe64(id));
+            continue;
+        }
+
         word_offset += PopPoint3(words + word_offset, &remote_object->m_Position);
         // dmGameObject::SetPosition(instance, remote_object->m_Position);
-
         dmVMath::Point3 curpos = dmGameObject::GetPosition(instance);
         dmVMath::Point3 newpos = LerpPoint(0.1, curpos, remote_object->m_Position);
         dmGameObject::SetPosition(instance, newpos);
@@ -498,6 +540,70 @@ void Fusion_TickAfterFrameBegin(double dt)
         dmVMath::Vector3 curscl = dmGameObject::GetScale(instance);
         dmVMath::Vector3 newscl = dmVMath::Lerp(0.1, curscl, remote_object->m_Scale);
         dmGameObject::SetScale(instance, newscl);
+
+        uint64_t socket;
+        uint64_t path;
+        uint64_t fragment;
+
+        uint8_t* header = object->Header.Ptr;
+        size_t header_offset = 0;
+        header_offset += PopHash(header + header_offset, &socket);
+        header_offset += PopHash(header + header_offset, &path);
+        header_offset += PopHash(header + header_offset, &fragment);
+        uint16_t component_count;
+        header_offset += PopUint16(header + header_offset, &component_count);
+        // dmLogInfo("object %s:%s#%s has %d components", dmHashReverseSafe64(socket), dmHashReverseSafe64(path), dmHashReverseSafe64(fragment), component_count);
+        for (int i = 0; i < component_count; i++)
+        {
+            dmhash_t component_id;
+            header_offset += PopHash(header + header_offset, &component_id);
+
+            uint32_t component_type;
+            dmGameObject::HComponent component;
+            dmGameObject::HComponentWorld world;
+            dmGameObject::Result r = dmGameObject::GetComponent(instance, component_id, &component_type, &component, &world);
+            if (dmGameObject::RESULT_OK != r)
+            {
+                dmLogError("Unable to get component with id '%s'", dmHashReverseSafe64(component_id));
+                continue;
+            }
+            // dmLogInfo("  component %d with id %s has type %d", i, dmHashReverseSafe64(component_id), component_type);
+
+            if (component_type == g_Ctx->m_Spritec)
+            {
+                dmLogInfo("  sprite");
+                dmhash_t animation;
+                float cursor;
+                word_offset += PopHash(words + word_offset, &animation);
+                word_offset += PopFloat(words + word_offset, &cursor);
+                dmGameObject::SetPropertyFromHash(instance, component_id, dmHashString64("animation"), animation);
+                dmGameObject::SetPropertyFromFloat(instance, component_id, dmHashString64("cursor"), cursor);
+            }
+            else if (component_type == g_Ctx->m_Modelc)
+            {
+                float current_cursor;
+                dmGameObject::GetPropertyAsFloat(instance, component_id, dmHashString64("cursor"), &current_cursor);
+
+                dmhash_t animation;
+                float cursor;
+                word_offset += PopHash(words + word_offset, &animation);
+                word_offset += PopFloat(words + word_offset, &cursor);
+                // dmLogInfo("    recv model animation %s", dmHashReverseSafe64(animation));
+                // dmLogInfo("    recv model animation cursor %f", cursor);
+
+                dmhash_t current_animation;
+                dmGameObject::GetPropertyAsHash(instance, component_id, dmHashString64("animation"), &current_animation);
+                if (current_animation != animation)
+                {
+                    dmLogInfo("    changing animation from %s to %s", dmHashReverseSafe64(current_animation), dmHashReverseSafe64(animation));
+                    dmRig::RigPlayback playback = dmRig::RigPlayback::PLAYBACK_LOOP_FORWARD;
+                    float blend_duration = 0;
+                    float offset = 0;
+                    float playback_rate = 1.0;
+                    dmGameSystem::CompModelPlayAnimation((dmGameSystem::HModelWorld)world, (dmGameSystem::HModelComponent)component, animation, playback, blend_duration, offset, playback_rate, 0, 0);
+                }
+            }
+        }
     }
 }
 
@@ -538,7 +644,7 @@ static int Init(lua_State* L)
     {
         delete g_Ctx->m_FusionClient;
     }
-    g_Ctx->m_FusionClient = new SharedMode::Client(appId, appVersion);
+    g_Ctx->m_FusionClient = new SharedMode::Client((const SharedMode::CharType*)appId, (const SharedMode::CharType*)appVersion);
     g_Ctx->m_FusionClient->OnObjectCreated = Fusion_OnObjectCreated;
     g_Ctx->m_FusionClient->OnSubObjectCreated = Fusion_OnSubObjectCreated;
     g_Ctx->m_FusionClient->OnObjectDestroyed = Fusion_OnObjectDestroyed;
@@ -561,6 +667,10 @@ static int Init(lua_State* L)
         return 0;
     }
     assert(g_Ctx->m_MainCollection != 0);
+
+    g_Ctx->m_Scriptc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("scriptc"));
+    g_Ctx->m_Spritec = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("spritec"));
+    g_Ctx->m_Modelc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("modelc"));
 
     return 0;
 }
@@ -607,7 +717,7 @@ static int Connect(lua_State* L)
     }
 
     dmLogInfo("Calling ConnectCloud with region '%s' user '%s' and server '%s'", region, userid, server);
-    g_Ctx->m_FusionClient->ConnectCloud(region, userid, server);
+    g_Ctx->m_FusionClient->ConnectCloud((const SharedMode::CharType*)region, (const SharedMode::CharType*)userid, (const SharedMode::CharType*)server);
     return 0;
 }
 
@@ -643,7 +753,7 @@ static int JoinOrCreateRoomRandom(lua_State* L)
     options.setIsOpen(true);
     options.setMaxPlayers(4);
     dmLogInfo("JoinRoomRandom name = %s", name);
-    g_Ctx->m_FusionClient->Photon().JoinOrCreateRoomRandom(name, options);
+    g_Ctx->m_FusionClient->Photon().JoinOrCreateRoomRandom((const SharedMode::CharType*)name, options);
     return 0;
 }
 
@@ -785,11 +895,6 @@ static int RegisterObject(lua_State* L)
     size_t componentCountOffset = headerLength;
     headerLength += PushUint16(header + headerLength, 0);
 
-    const uint32_t scriptc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("scriptc"));
-    const uint32_t spritec = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("spritec"));
-    const uint32_t modelc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("modelc"));
-    dmLogInfo("scriptc %d spritec %d modelc %d", scriptc, spritec, modelc);
-
     // pos, rot, scale
     size_t words = 3 + 4 + 3;
 
@@ -817,21 +922,18 @@ static int RegisterObject(lua_State* L)
 
         dmLogInfo("Got first component '%s' with type %d", dmHashReverseSafe64(component_id), component_type);
         headerLength += PushHash(header + headerLength, component_id);
-        headerLength += PushUint32(header + headerLength, component_type);
 
-        header[componentCountOffset];
-        if (component_type == scriptc)
+        if (component_type == g_Ctx->m_Scriptc)
         {
             words += 0;
         }
-        else if (component_type == modelc)
+        else if (component_type == g_Ctx->m_Modelc)
         {
-            words += 0;
+            words += 2 + 1; // animation (hash), cursor (float)
         }
-        else if (component_type == spritec)
+        else if (component_type == g_Ctx->m_Spritec)
         {
-            // animation (2), hflip, vflip
-            words += 4;
+            words += 2 + 1; // animation (hash), cursor (float)
         }
         else
         {
@@ -846,14 +948,14 @@ static int RegisterObject(lua_State* L)
 
     SharedMode::TypeRef type;
     type.Hash = 0;
-    type.WordCount = words;
+    type.WordCount = words + SharedMode::Object::ExtraTailWords;
 
     SharedMode::ObjectSettingsFlags objectSettingsFlags = SharedMode::ObjectSettingsFlags::None;
     SharedMode::ObjectOwnerModes objectOwnerMode = master ? SharedMode::ObjectOwnerModes::MasterClient : SharedMode::ObjectOwnerModes::Dynamic;
     SharedMode::ObjectInterestModes objectInterestModes = SharedMode::ObjectInterestModes::All;
     SharedMode::ObjectFlags objectFlags = SharedMode::ObjectFlags(objectSettingsFlags, objectOwnerMode, objectInterestModes);
 
-    SharedMode::ObjectRoot* object = g_Ctx->m_FusionClient->CreateObject(words, type, (char*)header, headerLength, scene, objectFlags);
+    SharedMode::ObjectRoot* object = g_Ctx->m_FusionClient->CreateObject(words, type, (SharedMode::CharType*)header, headerLength, scene, objectFlags);
 
     if (g_Ctx->m_FusionLocalObjects.Full())
     {
@@ -889,12 +991,37 @@ static int DestroyObject(lua_State* L)
     return 0;
 }
 
+/** Change scene
+ * @name scene_change
+ * @number index
+ * @number sequence
+ * @string data
+ */
+static int SceneChange(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    uint32_t index = (uint32_t)luaL_checknumber(L, 1);
+    uint32_t sequence = (uint32_t)luaL_checknumber(L, 2);
+    const char* data = luaL_checkstring(L, 3);
+
+    // bool ok = g_Ctx->m_FusionClient->SceneChange(object, true);
+
+    return 0;
+}
 static const luaL_reg Module_methods[] = {
     { "init", Init },
     { "connect", Connect },
     { "join_or_create_room_random", JoinOrCreateRoomRandom },
     { "register", RegisterObject },
     { "destroy", DestroyObject },
+    { "scene_change", SceneChange },
     { "is_connected", IsConnected },
     { "is_running", IsRunning },
     { "is_in_room", IsInRoom },
@@ -953,11 +1080,11 @@ dmExtension::Result FinalizeFusion(dmExtension::Params* params)
         free(remote_object);
     }
 
-    if (g_Ctx->m_MainCollection)
-    {
-        dmResource::Release(g_Ctx->m_ResourceFactory, g_Ctx->m_MainCollection);
-        g_Ctx->m_MainCollection = 0;
-    }
+    // if (g_Ctx->m_MainCollection)
+    // {
+    //     dmResource::Release(g_Ctx->m_ResourceFactory, g_Ctx->m_MainCollection);
+    //     g_Ctx->m_MainCollection = 0;
+    // }
 
     delete g_Ctx;
     return dmExtension::RESULT_OK;
@@ -973,6 +1100,7 @@ dmExtension::Result UpdateFusion(dmExtension::Params* params)
     // int res = g_Ctx->m_UpdateFn(dt);
     if (g_Ctx->m_FusionClient)
     {
+        //g_Ctx->m_FusionClient->Photon().Service();
         if (g_Ctx->m_FusionClient->Photon().IsInRoom())
         {
             Fusion_TickBeforeFrameEnd();

@@ -27,8 +27,10 @@ local function play_animation(self, id, playback)
 		local previous_playback = self.animation_playback
 		self.animation = id
 		self.animation_playback = playback
+		print("play", id)
 		model.play_anim("#model", id, playback or go.PLAYBACK_LOOP_FORWARD, nil, function()
 			self.animation = previous
+			print("done", id)
 			model.play_anim("#model", previous, previous_playback or go.PLAYBACK_LOOP_FORWARD)
 		end)
 	end
@@ -124,10 +126,10 @@ end
 
 function update(self, dt)
 	if self.remote_player then
-		print("I AM REMOTE", go.get_id(), go.get_position(), go.get_rotation(), go.get_scale())
+		--print("I AM REMOTE", go.get_id(), go.get_position(), go.get_rotation(), go.get_scale())
 		return
 	else
-		print("I AM LOCAL", go.get_id(), go.get_position(), go.get_rotation(), go.get_scale())
+		--print("I AM LOCAL", go.get_id(), go.get_position(), go.get_rotation(), go.get_scale())
 		--return
 	end
 

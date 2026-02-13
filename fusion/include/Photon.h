@@ -3,12 +3,13 @@
 #ifndef SHAREDCLIENT_PHOTON_H
 #define SHAREDCLIENT_PHOTON_H
 
-#define CONCAT_WSTRING(a, b) (std::wstring(a) + std::wstring(b) + std::wstring(L"\n")).c_str()
-
 #include "Misc.h"
 #include "Common-cpp/inc/JString.h"
 #include "LoadBalancing-cpp/inc/Client.h"
 #include <functional>
+#include <vector>
+
+#include "StringType.h"
 
 namespace SharedMode {
 	constexpr int PhotonClient_StatusNone = 0;
@@ -18,6 +19,12 @@ namespace SharedMode {
 	constexpr int PhotonClient_StatusConnected = 4;
 	constexpr int PhotonClient_StatusJoiningRoom = 5;
 	constexpr int PhotonClient_StatusInRoom = 6;
+	constexpr int PhotonClient_StatusTimeOut = 7;
+	constexpr int PhotonClient_StatusInvalidRegion = 8;
+
+	constexpr uint8_t PhotonClient_RegionSelectionMode_Default = 0;
+	constexpr uint8_t PhotonClient_RegionSelectionMode_Select = 1;
+	constexpr uint8_t PhotonClient_RegionSelectionMode_Best = 2;
 
 	class LBListener;
 
@@ -41,7 +48,7 @@ namespace SharedMode {
 		ExitGames::LoadBalancing::Client *_lbClient{nullptr};
 
 		int _status{0};
-		const char *_region{nullptr};
+		StringType _region{};
 
 		void OnPlayerJoined(int playerNr);
 
@@ -56,7 +63,7 @@ namespace SharedMode {
 		void OnCustomEvent(int playerNr, nByte eventCode, const ExitGames::Common::Object &eventContent);
 
 	public:
-		Photon(const char *appId, const char *appVersion);
+		Photon(const CharType* appId, const CharType* appVersion, const ExitGames::LoadBalancing::ClientConstructOptions& clientConstructOptions = ExitGames::LoadBalancing::ClientConstructOptions());
 
 		~Photon();
 
@@ -66,27 +73,27 @@ namespace SharedMode {
 
 		void PopOnJoinedCallback();
 
-		void ConnectCloud(const char *region, const char *userId, const char* serverAddress);
+		void ConnectCloud(const CharType* region, const CharType* userId, const CharType* serverAddress);
 
-		void ConnectLocal(const char *address);
+		void ConnectLocal(const CharType* address);
 
 		bool Disconnect();
 
-		void JoinRoom(const char *room);
+		void JoinRoom(const CharType* room);
 
 		void JoinRoomRandom();
 
-		void JoinOrCreateRoom(const char *room,
+		void JoinOrCreateRoom(const CharType* room,
 		                      const ExitGames::LoadBalancing::RoomOptions &options =
 				                      ExitGames::LoadBalancing::RoomOptions());
 
-		void JoinOrCreateRoomRandom(const char *room,
+		void JoinOrCreateRoomRandom(const CharType* room,
 		                            const ExitGames::LoadBalancing::RoomOptions &options =
 				                            ExitGames::LoadBalancing::RoomOptions());
 
 		void LeaveRoom();
 
-		void CreateRoom(const char *room,
+		void CreateRoom(const CharType* room,
 		                const ExitGames::LoadBalancing::RoomOptions &options = ExitGames::LoadBalancing::RoomOptions());
 
 		void SendEvent(nByte code, nByte *data, size_t length, bool reliable);

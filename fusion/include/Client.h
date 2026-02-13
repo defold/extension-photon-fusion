@@ -8,6 +8,8 @@
 #include "Misc.h"
 #include "Types.h"
 #include <string>
+#include <unordered_map>
+#include <set>
 
 template<>
 struct std::hash<SharedMode::ObjectId> {
@@ -19,6 +21,19 @@ struct std::hash<SharedMode::ObjectId> {
 	}
 };
 
+
+template<>
+struct std::hash<SharedMode::AOILocation> {
+	std::size_t operator()(const SharedMode::AOILocation &k) const noexcept {
+		size_t hash = 17;
+		hash = hash * 31 + k.X;
+		hash = hash * 31 + k.Y;
+		hash = hash * 31 + k.Z;
+		return hash;
+	}
+};
+
+
 namespace SharedMode {
 	class Client;
 
@@ -27,6 +42,14 @@ namespace SharedMode {
 		Remote = 1,
 		SceneChange = 2,
 		Shutdown = 3
+	};
+
+	enum LogLevel : uint8_t {
+		Trace = 1 << 0,
+		Debug = 1 << 1,
+		Info = 1 << 2,
+		Warning = 1 << 3,
+		Error = 1 << 4
 	};
 
 	class PhotonNotifyPlatform final : public Notify::Platform {
@@ -53,10 +76,11 @@ namespace SharedMode {
 	class Client {
 		bool _expectingEnd;
 
+		bool _configEmpty{true};
+		double _clientSendRate{30};
 		bool _aoiUsed;
 		int32_t _aoiCellSize;
-		int32_t _aoiBoxesMax;
-		std::unordered_map<std::string, InterestBox> _aoiLocations{};
+		std::set<AOILocation> _aoiLocations{};
 
 		double _timeDiff{0};
 		double _localClock{0};
@@ -69,9 +93,6 @@ namespace SharedMode {
 
 		uint32_t _sceneSequence;
 		Data _sceneData;
-
-		json _config{};
-		json _configLocal{};
 
 		std::unordered_map<ObjectId, Object *> _objects{};
 		std::unordered_map<ObjectId, ObjectRoot *> _objectsRoots{};
@@ -132,8 +153,7 @@ namespace SharedMode {
 		Object *ReadObjectHeader(ObjectId id, ReadBuffer &reader, bool create, PlayerId owner, bool root,
 		                         bool allowCreate);
 
-		ObjectTail &GetTail(const Object *obj) const;
-		ObjectTail* GetTailPtr(const Object *obj) const;
+		static ObjectTail &GetTail(const Object *obj);
 
 		void SkipObjectData(ReadBuffer &reader);
 		void SkipStringHeap(ReadBuffer& reader, bool stringHeapEntriesChanged, bool stringHeapDataChanged);
@@ -146,28 +166,24 @@ namespace SharedMode {
 
 		bool DestroyObjectLocal(ObjectRoot *obj, bool engineObjectAlreadyDestroyed);
 
-		bool AOIUsed() const { return _aoiUsed; }
-		int32_t AOICellSize() const { return _aoiCellSize; }
+		bool AreaOfInterestUsed() const;
 
-		const std::unordered_map<std::string, InterestBox> &GetAllAreaOfInterestBoxes();
+		int32_t AreaOfInterestCellSize() const;
 
-		InterestBox GetAreaOfInterestBox(const std::string &name);
-
-		void SetAreaOfInterestBox(const std::string &name, const InterestBox &box);
-
-		void RemoveAreaOfInterestBox(const std::string &name);
-
-		InterestVector CalculateAreaOfInterestLocation(double x, double y, double z) const;
+		std::set<AOILocation>& GetAreaOfInterestLocations();
+		AOILocation CalculateAreaOfInterestLocation(double x, double y, double z) const;
 
 		bool IsRoot(const Object *object);
 
-		void SetAreaOfInterestLocation(const Object *obj, InterestVector location);
+		void SetAreaOfInterestLocation(const Object *obj, AOILocation location);
 
 		ObjectFlags SanitizeFlags(ObjectFlags flags) const;
 
 		void SetWantOwner(Object *obj);
 
 		void SetDontWantOwner(Object *obj);
+
+		ObjectId GetNewObjectId();
 
 
 		void ClearOwnerCooldown(Object *obj);
@@ -187,16 +203,15 @@ namespace SharedMode {
 		std::function<void(ObjectChild *)> OnSubObjectCreated;
 		std::function<void(const ObjectRoot *, DestroyModes)> OnObjectDestroyed;
 
-		Client(const char *appId, const char *appVersion);
+		Client(const CharType* appId, const CharType* appVersion, const ExitGames::LoadBalancing::ClientConstructOptions& clientConstructOptions = ExitGames::LoadBalancing::ClientConstructOptions());
 
 		~Client();
 
-		json &Config() { return _config; }
 		Photon &Photon() { return _photon; }
 
 		static SdkVersion GetSdkVersion();
 
-		bool IsRunning() const { return !_config.empty() && _photon.IsInRoom(); }
+		bool IsRunning() const { return !_configEmpty && _photon.IsInRoom(); }
 
 		bool IsMasterClient();
 
@@ -215,9 +230,9 @@ namespace SharedMode {
 
 		double GetRtt() const;
 
-		void ConnectCloud(const char *region, const char *userId, const char* serverAddress);
+		void ConnectCloud(const CharType* region, const CharType* userId, const CharType* serverAddress);
 
-		void ConnectLocal(const char *endpoint);
+		void ConnectLocal(const CharType* endpoint);
 
 		void UpdateFrameBegin(double dt);
 
@@ -227,7 +242,7 @@ namespace SharedMode {
 
 		void Shutdown(bool development);
 
-		void ChangeScene(uint32_t index, uint32_t sequence, const char *data);
+		void ChangeScene(uint32_t index, uint32_t sequence, const CharType* data);
 
 		void StateUpdatesPause();
 
@@ -243,23 +258,27 @@ namespace SharedMode {
 
 		bool HasOwner(const Object *obj) const;
 
+		int32_t PlayerCount() const;
+
 		void SetObjectPriority(ObjectId id, int32_t priority);
 
 		Object *FindObject(ObjectId id) const;
 
 		ObjectRoot *FindObjectRoot(ObjectId id) const;
 
-		ObjectRoot *CreateSceneObject(bool &alreadyPopulated, size_t words, const TypeRef &type, const char *header,
+		Object* FindSubObjectWithHash(ObjectRoot* Root, uint32_t subObjectHash) const;
+
+		ObjectRoot *CreateSceneObject(bool &alreadyPopulated, size_t words, const TypeRef &type, const CharType* header,
 		                          size_t headerLength, uint32_t scene, uint32_t id, ObjectFlags objectFlags);
 
-		ObjectRoot *CreateGlobalInstanceObject(bool &alreadyPopulated, size_t words, const TypeRef &type, const char *header,
+		ObjectRoot *CreateGlobalInstanceObject(bool &alreadyPopulated, size_t words, const TypeRef &type, const CharType* header,
 						  size_t headerLength, uint32_t scene, uint32_t id, ObjectFlags objectFlags);
 
-		ObjectRoot *CreateObject(size_t words, const TypeRef &type, const char *header,
+		ObjectRoot *CreateObject(size_t words, const TypeRef &type, const CharType* header,
 		                     size_t headerLength, uint32_t scene, ObjectFlags objectFlags);
 
-		ObjectChild *CreateSubObject(ObjectId parent, size_t words, const TypeRef &type, const char *header,
-		                        size_t headerLength, int32_t objectIndex, int32_t rootObjectIndex, uint32_t targetObjectHash, bool ignoreRootProperties);
+		ObjectChild *CreateSubObject(ObjectId parent, size_t words, const TypeRef &type, const CharType* header,
+		                        size_t headerLength, uint32_t targetObjectHash, ObjectId id, ObjectSpecialFlags SpecialFlags);
 
 		bool HasSubObjects(const Object *Root);
 
@@ -268,18 +287,6 @@ namespace SharedMode {
 		bool AddSubObject(ObjectRoot *ParentObject, ObjectChild *SubObject);
 
 		friend class PhotonNotifyPlatform;
-
-		template<typename T>
-		T ConfigGetOrDefault(const std::string &name, T defaultValue = T()) {
-			T value{};
-
-			if (_config.contains(name)) {
-				_config[name].get_to(value);
-				return value;
-			}
-
-			return defaultValue;
-		}
 	};
 }
 

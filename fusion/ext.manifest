@@ -7,7 +7,7 @@ platforms:
             defines:  ["_EG_IMAC_PLATFORM"]
             frameworks: ["CFNetwork", "CoreFoundation", "Foundation", "Security"]
             weakFrameworks: []
-            flags:    ["-std=c++17"]
+            flags:    ["-std=c++20"]
     ios:
         context:
             defines:  ["_EG_IPHONE_PLATFORM"]
