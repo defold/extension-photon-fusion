@@ -41,6 +41,9 @@ local function connect(region, userid, server)
 	wait_until(function()
 		return fusion.is_connected()
 	end)
+	fusion.on_event(function(self, event_id, event)
+		print("on event", event_id, event)
+	end)
 end
 
 local function join_room(name)

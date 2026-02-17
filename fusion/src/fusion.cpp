@@ -27,8 +27,6 @@
 #include "LogUtils.h"
 #include "LogOutput.h"
 
-typedef int(*FusionUpdateFn)(double dt);
-
 
 class FusionDefoldLogOutput : public SharedMode::Logging::LogOutput
 {
@@ -74,17 +72,20 @@ struct FusionCtx
 {
     dmResource::HFactory                           m_ResourceFactory;
     dmConfigFile::HConfig                          m_ConfigFile;
-    dmGameObject::HCollection                      m_MainCollection;
+    dmGameObject::HCollection                      m_Collection;
     uint64_t                                       m_Timestamp;
     SharedMode::Client*                            m_FusionClient;
     dmHashTable<dmhash_t, SharedMode::ObjectRoot*> m_FusionLocalObjects;
     dmHashTable<dmhash_t, FusionRemoteObject*>     m_FusionRemoteObjects;
     FusionDefoldLogOutput*                         m_FusionDefoldLogOutput;
-    FusionUpdateFn                                 m_UpdateFn;
+    dmScript::LuaCallbackInfo*                     m_EventCallback;
 
     uint32_t                                       m_Scriptc;
     uint32_t                                       m_Spritec;
     uint32_t                                       m_Modelc;
+    uint32_t                                       m_Collisionobjectc;
+    uint32_t                                       m_Particlefxc;
+    uint32_t                                       m_Labelc;
 
     FusionCtx()
     {
@@ -195,8 +196,6 @@ static size_t PopHash(SharedMode::Word* words, dmhash_t* out)
     return 2;
 }
 
-
-
 static size_t PushHash(uint8_t* a, dmhash_t h)
 {
     a[0] = (h & 0xFF00000000000000) >> 56;
@@ -209,7 +208,6 @@ static size_t PushHash(uint8_t* a, dmhash_t h)
     a[7] = (h & 0x00000000000000FF) >> 0;
     return 8;
 }
-
 static size_t PopHash(uint8_t* a, dmhash_t* out)
 {
     *out = (dmhash_t)(
@@ -224,7 +222,6 @@ static size_t PopHash(uint8_t* a, dmhash_t* out)
         );
     return 8;
 }
-
 static size_t PushUint32(uint8_t* a, uint32_t i)
 {
     a[0] = (i & 0xFF000000) >> 24;
@@ -243,7 +240,6 @@ static size_t PopUint32(uint8_t* a, uint32_t* out)
         );
     return 4;
 }
-
 static size_t PushUint16(uint8_t* a, uint16_t i)
 {
     a[0] = (i & 0x0000FF00) >> 8;
@@ -258,7 +254,6 @@ static size_t PopUint16(uint8_t* a, uint16_t* out)
         );
     return 2;
 }
-
 static size_t PushUint8(uint8_t* a, uint8_t i)
 {
     a[0] = i;
@@ -273,6 +268,65 @@ static size_t PopUint8(uint8_t* a, uint8_t* out)
 /******
  * Fusion callbacks
  *************************/
+
+static lua_State* SetupListener()
+{
+    if (!dmScript::IsCallbackValid(g_Ctx->m_EventCallback))
+    {
+        return 0;
+    }
+
+    lua_State* L = dmScript::GetCallbackLuaContext(g_Ctx->m_EventCallback);
+    if (!dmScript::SetupCallback(g_Ctx->m_EventCallback))
+    {
+        dmLogError("Failed to setup callback");
+        return 0;
+    }
+    return L;
+}
+
+static int CallListener(lua_State* L, int nargs, int nresults)
+{
+    int result = dmScript::PCall(L, nargs, nresults);
+    dmScript::TeardownCallback(g_Ctx->m_EventCallback);
+    return result;
+}
+
+static int CallListener(dmhash_t event_id)
+{
+    lua_State* L = SetupListener();
+    if (!L)
+    {
+        return 0;
+    }
+    dmScript::PushHash(L, event_id);
+    return CallListener(L, 2, 0);
+}
+
+static int CallListener(dmhash_t event_id, dmhash_t v)
+{
+    lua_State* L = SetupListener();
+    if (!L)
+    {
+        return 0;
+    }
+    dmScript::PushHash(L, event_id);
+    dmScript::PushHash(L, v);
+    return CallListener(L, 3, 0);
+}
+
+static int CallListener(dmhash_t event_id, const char* v)
+{
+    lua_State* L = SetupListener();
+    if (!L)
+    {
+        return 0;
+    }
+    dmScript::PushHash(L, event_id);
+    lua_pushstring(L, v);
+    return CallListener(L, 3, 0);
+}
+
 
 static void Fusion_OnObjectCreated(SharedMode::ObjectRoot* object)
 {
@@ -292,7 +346,7 @@ static void Fusion_OnObjectCreated(SharedMode::ObjectRoot* object)
 
     //
     // get factory component
-    dmGameObject::HInstance factory_go = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_MainCollection, path);
+    dmGameObject::HInstance factory_go = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, path);
     if (factory_go == 0)
     {
         dmLogError("Main collection does not have a game object named %s", dmHashReverseSafe64(path));
@@ -324,7 +378,7 @@ static void Fusion_OnObjectCreated(SharedMode::ObjectRoot* object)
     dmGameObject::HPropertyContainer properties = dmGameObject::PropertyContainerCreate(builder);
 
     r = dmGameSystem::CompFactorySpawn(
-            world, factory, g_Ctx->m_MainCollection,
+            world, factory, g_Ctx->m_Collection,
             id, 
             position, rotation, scale,
             properties, &instance);
@@ -347,10 +401,13 @@ static void Fusion_OnObjectCreated(SharedMode::ObjectRoot* object)
     FusionRemoteObject* remote_object = (FusionRemoteObject*)malloc(sizeof(FusionRemoteObject));
     remote_object->m_SharedObject = object;
     g_Ctx->m_FusionRemoteObjects.Put(id, remote_object);
+
+    CallListener(dmHashString64("OnObjectCreated"), id);
 }
 static void Fusion_OnSubObjectCreated(const SharedMode::ObjectChild* child)
 {
     dmLogInfo("Fusion_OnSubObjectCreated");
+    CallListener(dmHashString64("OnSubObjectCreated"));
 }
 // TODO Handle DestroyMode
 static void Fusion_OnObjectDestroyed(const SharedMode::ObjectRoot* object, const SharedMode::DestroyModes mode)
@@ -362,13 +419,15 @@ static void Fusion_OnObjectDestroyed(const SharedMode::ObjectRoot* object, const
     {
         dmhash_t id = iter.GetKey();
         FusionRemoteObject* remote_object = iter.GetValue();
-        dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_MainCollection, id);
+        dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
         if (object == remote_object->m_SharedObject)
         {
             dmLogInfo("Found object to destroy %s", dmHashReverseSafe64(id));
-            dmGameObject::Delete(g_Ctx->m_MainCollection, instance, true);
+            dmGameObject::Delete(g_Ctx->m_Collection, instance, true);
             g_Ctx->m_FusionRemoteObjects.Erase(id);
             free(remote_object);
+
+            CallListener(dmHashString64("OnObjectDestroyed"), id);
             return;
         }
     }
@@ -377,28 +436,73 @@ static void Fusion_OnObjectDestroyed(const SharedMode::ObjectRoot* object, const
 static void Fusion_OnObjectOwnerChanged(const SharedMode::ObjectRoot* obj)
 {
     dmLogInfo("Fusion_OnObjectOwnerChanged owner: %d local player: %d", obj->Owner, g_Ctx->m_FusionClient->LocalPlayerId());
+    CallListener(dmHashString64("OnObjectOwnerChanged"));
 }
 static void Fusion_OnObjectPredictionOverride(const SharedMode::ObjectRoot* obj)
 {
     dmLogInfo("Fusion_OnObjectPredictionOverride");
+    CallListener(dmHashString64("OnObjectPredictionOverride"));
 }
 static void Fusion_OnRoomJoin()
 {
     dmLogInfo("Fusion_OnRoomJoin local player: %d", g_Ctx->m_FusionClient->LocalPlayerId());
     const char* name = g_Ctx->m_FusionClient->Photon().LoadBalancingClient().getCurrentlyJoinedRoom().getName().UTF8Representation().cstr();
     dmLogInfo("%s", name);
+    CallListener(dmHashString64("OnRoomJoin"), name);
 }
 static void Fusion_OnRoomLeave()
 {
     dmLogInfo("Fusion_OnRoomLeave");
+    CallListener(dmHashString64("OnRoomLeave"));
 }
 static void Fusion_OnRpc(const SharedMode::Rpc& rpc)
 {
     dmLogInfo("Fusion_OnRpc");
+    lua_State* L = SetupListener();
+    if(L)
+    {
+        dmScript::PushHash(L, dmHashString64("OnRpc"));
+
+        lua_newtable(L);
+        lua_pushinteger(L, rpc.Id);
+        lua_setfield(L, -2, "id");
+        lua_pushinteger(L, rpc.OriginPlayer);
+        lua_setfield(L, -2, "origin_player");
+        lua_pushinteger(L, rpc.TargetPlayer);
+        lua_setfield(L, -2, "target_player");
+        lua_pushinteger(L, rpc.TargetObject.Origin);
+        lua_setfield(L, -2, "target_object_player");
+        lua_pushinteger(L, rpc.TargetObject.Counter);
+        lua_setfield(L, -2, "target_object_counter");
+        dmScript::PushHash(L, dmhash_t(rpc.DescriptorTypeHash));
+        lua_setfield(L, -2, "descriptor_type");
+        dmScript::PushHash(L, dmhash_t(rpc.EventHash));
+        lua_setfield(L, -2, "event");
+        lua_pushlstring(L, (char*)rpc.Bytes.Ptr, rpc.Bytes.Length);
+        lua_setfield(L, -2, "bytes");
+
+        CallListener(L, 3, 0);
+    }
 }
 static void Fusion_OnSceneChange(uint32_t index, uint32_t sequence, SharedMode::Data data)
 {
     dmLogInfo("Fusion_OnSceneChange");
+
+    lua_State* L = SetupListener();
+    if(L)
+    {
+        dmScript::PushHash(L, dmHashString64("OnSceneChange"));
+
+        lua_newtable(L);
+        lua_pushinteger(L, index);
+        lua_setfield(L, -2, "index");
+        lua_pushinteger(L, sequence);
+        lua_setfield(L, -2, "sequence");
+        lua_pushlstring(L, (char*)data.Ptr, data.Length);
+        lua_setfield(L, -2, "data");
+
+        CallListener(L, 3, 0);
+    }
 }
 
 
@@ -416,7 +520,7 @@ void Fusion_TickBeforeFrameEnd()
     while(iter.Next())
     {
         dmhash_t id = iter.GetKey();
-        dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_MainCollection, id);
+        dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
         SharedMode::ObjectRoot* object = iter.GetValue();
 
         SharedMode::Word *words = object->Words.Ptr;
@@ -492,7 +596,6 @@ dmVMath::Point3 LerpPoint(float t, dmVMath::Point3 a, dmVMath::Point3 b)
         a.getY() + (b.getY() - a.getY()) * t,
         a.getZ() + (b.getZ() - a.getZ()) * t);
 }
-static uint32_t foo = 0;
 void Fusion_TickAfterFrameBegin(double dt)
 {
     // TODO Respect object->IgnoreProperties?
@@ -516,7 +619,7 @@ void Fusion_TickAfterFrameBegin(double dt)
         size_t word_offset = 0;
 
         dmhash_t id = iter.GetKey();
-        dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_MainCollection, id);
+        dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
         if (!instance)
         {
             dmLogWarning("Fusion_TickAfterFrameBegin unable to find object with id %s", dmHashReverseSafe64(id));
@@ -610,13 +713,6 @@ void Fusion_TickAfterFrameBegin(double dt)
 
 
 
-
-int Fusion_Update(double dt)
-{
-    return 0;
-}
-
-
 /******
  * Fusion Lua API functions
  *************************/
@@ -656,21 +752,15 @@ static int Init(lua_State* L)
     g_Ctx->m_FusionClient->OnObjectPredictionOverride = Fusion_OnObjectPredictionOverride;
 
     g_Ctx->m_FusionDefoldLogOutput = new FusionDefoldLogOutput();
-    g_Ctx->m_UpdateFn = &Fusion_Update;
 
-    const char* main_collection_path = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "bootstrap.main_collection", 0);
-    dmLogInfo("main collection %s", main_collection_path);
-    dmResource::Result res = dmResource::Get(g_Ctx->m_ResourceFactory, main_collection_path, (void**) &g_Ctx->m_MainCollection);
-    if (dmResource::RESULT_OK != res)
-    {
-        dmLogError("Failed to get main collection '%s'", main_collection_path);
-        return 0;
-    }
-    assert(g_Ctx->m_MainCollection != 0);
-
-    g_Ctx->m_Scriptc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("scriptc"));
-    g_Ctx->m_Spritec = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("spritec"));
-    g_Ctx->m_Modelc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_MainCollection, dmHashString64("modelc"));
+    dmGameObject::HInstance caller_instance = dmScript::CheckGOInstance(L);
+    g_Ctx->m_Collection = dmGameObject::GetCollection(caller_instance);
+    g_Ctx->m_Scriptc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("scriptc"));
+    g_Ctx->m_Spritec = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("spritec"));
+    g_Ctx->m_Modelc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("modelc"));
+    g_Ctx->m_Collisionobjectc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("collisionobjectc"));
+    g_Ctx->m_Particlefxc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("particlefxc"));
+    g_Ctx->m_Labelc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("labelc"));
 
     return 0;
 }
@@ -898,7 +988,7 @@ static int RegisterObject(lua_State* L)
     // pos, rot, scale
     size_t words = 3 + 4 + 3;
 
-    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_MainCollection, id);
+    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
     uint16_t component_index = 0;
     while (true)
     {
@@ -1015,6 +1105,62 @@ static int SceneChange(lua_State* L)
 
     return 0;
 }
+
+/** Send RPC
+ * @name send_rpc
+ * @number target_player 0 = all, specific PlayerId = targeted
+ * @hash descriptor
+ * @hash event
+ * @string data
+ * @treturn boolean ok
+ */
+static int SendRpc(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 1);
+
+    SharedMode::PlayerId target_player = (SharedMode::PlayerId)luaL_checknumber(L, 1);
+    SharedMode::ObjectId target_object;
+    dmhash_t descriptor_type = dmScript::CheckHashOrString(L, 2);
+    dmhash_t event = dmScript::CheckHashOrString(L, 3);
+
+    size_t data_length;
+    const char* data = luaL_checklstring(L, 4, &data_length);
+
+    uint64_t id = 1024;
+
+    SharedMode::Rpc rpc = g_Ctx->m_FusionClient->CreateUserRpc(id, target_player, target_object, descriptor_type, event, data, data_length);
+
+    bool ok = g_Ctx->m_FusionClient->SendUserRpc(rpc);
+    lua_pushboolean(L, ok);
+    return 1;
+}
+
+/** Set event listener
+ * @name on_event
+ * @function listener
+ */
+static int OnEvent(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    g_Ctx->m_EventCallback = dmScript::CreateCallback(L, 1);
+
+    return 0;
+}
+
+
 static const luaL_reg Module_methods[] = {
     { "init", Init },
     { "connect", Connect },
@@ -1022,6 +1168,8 @@ static const luaL_reg Module_methods[] = {
     { "register", RegisterObject },
     { "destroy", DestroyObject },
     { "scene_change", SceneChange },
+    { "send_rpc", SendRpc },
+    { "on_event", OnEvent },
     { "is_connected", IsConnected },
     { "is_running", IsRunning },
     { "is_in_room", IsInRoom },
@@ -1080,11 +1228,11 @@ dmExtension::Result FinalizeFusion(dmExtension::Params* params)
         free(remote_object);
     }
 
-    // if (g_Ctx->m_MainCollection)
-    // {
-    //     dmResource::Release(g_Ctx->m_ResourceFactory, g_Ctx->m_MainCollection);
-    //     g_Ctx->m_MainCollection = 0;
-    // }
+    if (g_Ctx->m_EventCallback)
+    {
+        dmScript::DestroyCallback(g_Ctx->m_EventCallback);
+        g_Ctx->m_EventCallback = 0;
+    }
 
     delete g_Ctx;
     return dmExtension::RESULT_OK;
@@ -1097,10 +1245,9 @@ dmExtension::Result UpdateFusion(dmExtension::Params* params)
     g_Ctx->m_Timestamp = t;
     double dt = (double)delta / 1000000.0;
 
-    // int res = g_Ctx->m_UpdateFn(dt);
     if (g_Ctx->m_FusionClient)
     {
-        //g_Ctx->m_FusionClient->Photon().Service();
+        g_Ctx->m_FusionClient->Photon().Service(true);
         if (g_Ctx->m_FusionClient->Photon().IsInRoom())
         {
             Fusion_TickBeforeFrameEnd();

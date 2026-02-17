@@ -23,9 +23,12 @@
     - name: server
       type: string
 
-  - name: join_room_random
+  - name: join_or_create_room_random
     type: function
-    desc: Join random room. 
+    desc: Join or create random room. 
+    parameters:
+    - name: room_name
+      type: string
 
   - name: is_connected
     type: function
@@ -70,4 +73,44 @@
       type: string
     - name: scene
       type: number
+
+  - name: destroy
+    type: function
+    desc: Destroy an object. 
+    parameters:
+    - name: id
+      type: string
+
+  - name: scene_change
+    type: function
+    desc: Change scene. 
+    parameters:
+    - name: index
+      type: number
+    - name: sequence
+      type: number
+    - name: data
+      type: string
+
+  - name: send_rpc
+    type: function
+    desc: Send RPC. 
+    parameters:
+    - name: target_player
+      type: number
+      desc: |
+        0 = all, specific PlayerId = targeted
+        
+    - name: data
+      type: string
+    returns:
+    - name: ok
+      type: boolean
+
+  - name: on_event
+    type: function
+    desc: Set event listener. 
+    parameters:
+    - name: listener
+      type: function
 
