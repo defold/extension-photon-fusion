@@ -16,6 +16,7 @@ local ACTION_FORWARD = hash("forward")
 local ACTION_BACK = hash("back")
 local ACTION_JUMP = hash("jump")
 local ACTION_ATTACK = hash("attack")
+local ACTION_RPC = hash("rpc")
 
 local MSG_CONTACT_POINT_RESPONSE = hash("contact_point_response")
 
@@ -215,6 +216,15 @@ function on_input(self, action_id, action)
 	elseif action_id == ACTION_JUMP then
 		if action.pressed then
 			jump(self, JUMP_SPEED)
+		end
+	elseif action_id == ACTION_RPC then
+		if action.pressed then
+			print("send rpc")
+			local target = 0
+			local descriptor = "desc"
+			local event = "event"
+			local data = "data"
+			fusion.send_rpc(target, descriptor, event, data)
 		end
 	end
 end

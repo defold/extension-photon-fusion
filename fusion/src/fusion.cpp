@@ -265,6 +265,42 @@ static size_t PopUint8(uint8_t* a, uint8_t* out)
     return 1;
 }
 
+static SharedMode::ObjectRoot* GetObject(dmhash_t id)
+{
+    SharedMode::ObjectRoot** local_object = g_Ctx->m_FusionLocalObjects.Get(id);
+    if (local_object)
+    {
+        return *local_object;
+    }
+
+    FusionRemoteObject** remote_object = g_Ctx->m_FusionRemoteObjects.Get(id);
+    if (remote_object)
+    {
+        return (*remote_object)->m_SharedObject;
+    }
+
+    return 0;
+}
+static SharedMode::ObjectRoot* GetLocalObject(dmhash_t id)
+{
+    SharedMode::ObjectRoot** local_object = g_Ctx->m_FusionLocalObjects.Get(id);
+    if (local_object)
+    {
+        return *local_object;
+    }
+    return 0;
+}
+static SharedMode::ObjectRoot* GetRemoteObject(dmhash_t id)
+{
+    FusionRemoteObject** remote_object = g_Ctx->m_FusionRemoteObjects.Get(id);
+    if (remote_object)
+    {
+        return (*remote_object)->m_SharedObject;
+    }
+
+    return 0;
+}
+
 /******
  * Fusion callbacks
  *************************/
@@ -511,11 +547,10 @@ static void Fusion_OnSceneChange(uint32_t index, uint32_t sequence, SharedMode::
  * Fusion update lifecycle
  *************************/
 
+// send object properties
 void Fusion_TickBeforeFrameEnd()
 {
-    dmLogInfo("TickBeforeFrameEnd");
-
-
+    // dmLogInfo("TickBeforeFrameEnd");
     dmHashTable<dmhash_t, SharedMode::ObjectRoot*>::Iterator iter = g_Ctx->m_FusionLocalObjects.GetIterator();
     while(iter.Next())
     {
@@ -596,6 +631,8 @@ dmVMath::Point3 LerpPoint(float t, dmVMath::Point3 a, dmVMath::Point3 b)
         a.getY() + (b.getY() - a.getY()) * t,
         a.getZ() + (b.getZ() - a.getZ()) * t);
 }
+
+// updated object properties with received data
 void Fusion_TickAfterFrameBegin(double dt)
 {
     // TODO Respect object->IgnoreProperties?
@@ -953,6 +990,21 @@ static int EnableDebug(lua_State* L)
     return 0;
 }
 
+
+/** Register a scene object
+ * @name register
+ * @string id
+ * @number scene
+ */
+static int RegisterSceneObject(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+}
+
 /** Register an object
  * @name register
  * @string id
@@ -1057,7 +1109,7 @@ static int RegisterObject(lua_State* L)
     return 0;
 }
 
-/** Destroy an object
+/** Destroy a local object
  * @name destroy
  * @string id
  */
@@ -1074,10 +1126,12 @@ static int DestroyObject(lua_State* L)
     dmLogInfo("DestroyObject local player id: %d", g_Ctx->m_FusionClient->LocalPlayerId());
 
     dmhash_t id = dmScript::CheckHashOrString(L, 1);
-    SharedMode::ObjectRoot* object = *g_Ctx->m_FusionLocalObjects.Get(id);
-    bool ok = g_Ctx->m_FusionClient->DestroyObjectLocal(object, true);
-    g_Ctx->m_FusionLocalObjects.Erase(id);
-
+    SharedMode::ObjectRoot* object = GetLocalObject(id);
+    if (object)
+    {
+        bool ok = g_Ctx->m_FusionClient->DestroyObjectLocal(object, true);
+        g_Ctx->m_FusionLocalObjects.Erase(id);
+    }
     return 0;
 }
 
@@ -1160,21 +1214,221 @@ static int OnEvent(lua_State* L)
     return 0;
 }
 
+/**
+ * Get the player id of the local client
+ * @name get_local_player_id
+ * @treturn number The player id of the local client
+ */
+static int GetLocalPlayerId(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 1);
+
+    SharedMode::PlayerId id = g_Ctx->m_FusionClient->LocalPlayerId();
+    lua_pushinteger(L, id);
+    return 1;
+}
+
+/**
+ * Get the player id of the current owner of an object
+ * @name get_owner
+ * @string id Id of the object to get the owner for
+ * @treturn number The player id of the object's owner
+ */
+static int GetOwner(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 1);
+
+    dmhash_t id = dmScript::CheckHashOrString(L, 1);
+    SharedMode::ObjectRoot* object = GetObject(id);
+    if (object)
+    {
+        SharedMode::PlayerId owner = g_Ctx->m_FusionClient->GetOwner(object);
+        lua_pushinteger(L, owner);
+    }
+    else
+    {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+
+/**
+ * Check if the local client is the owner of an object
+ * @name is_owner
+ * @string id Id of the object
+ * @treturn boolean True if the local client is the owner of the object
+ */
+static int IsOwner(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 1);
+
+    dmhash_t id = dmScript::CheckHashOrString(L, 1);
+    SharedMode::ObjectRoot* object = GetObject(id);
+    if (object)
+    {
+        bool is_owner = g_Ctx->m_FusionClient->IsOwner(object);
+        lua_pushboolean(L, is_owner);
+    }
+    else
+    {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
+/**
+ * Check if an object has an owner
+ * @name has_owner
+ * @string id Id of the object
+ * @treturn boolean True if the object has an owner
+ */
+static int HasOwner(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 1);
+
+    dmhash_t id = dmScript::CheckHashOrString(L, 1);
+    SharedMode::ObjectRoot* object = GetObject(id);
+    if (object)
+    {
+        bool has_owner = g_Ctx->m_FusionClient->HasOwner(object);
+        lua_pushboolean(L, has_owner);
+    }
+    else
+    {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
+/**
+ * Signal desire for the local client to own an object
+ * @name set_want_owner
+ * @string id Id of the object to own
+ */
+static int SetWantOwner(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    dmhash_t id = dmScript::CheckHashOrString(L, 1);
+    SharedMode::ObjectRoot* object = GetObject(id);
+    if (object)
+    {
+        g_Ctx->m_FusionClient->SetWantOwner(object);
+    }
+    return 0;
+}
+
+/**
+ * Signal desire for the local client to no longer own an object
+ * @name set_dont_want_owner
+ * @string id Id of the object to disown
+ */
+static int SetDontWantOwner(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    dmhash_t id = dmScript::CheckHashOrString(L, 1);
+    SharedMode::ObjectRoot* object = GetObject(id);
+    if (object)
+    {
+        g_Ctx->m_FusionClient->SetDontWantOwner(object);
+    }
+    return 0;
+}
+
+/**
+ * Explicitly clear the ownership cooldown
+ * @name clear_owner_cooldown
+ * @string id Id of the object to clear cooldown for
+ */
+static int ClearOwnerCooldown(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    dmhash_t id = dmScript::CheckHashOrString(L, 1);
+    SharedMode::ObjectRoot* object = GetObject(id);
+    if (object)
+    {
+        g_Ctx->m_FusionClient->ClearOwnerCooldown(object);
+    }
+    return 0;
+}
+
 
 static const luaL_reg Module_methods[] = {
     { "init", Init },
     { "connect", Connect },
     { "join_or_create_room_random", JoinOrCreateRoomRandom },
+    { "enable_debug", EnableDebug },
+    { "get_local_player_id", GetLocalPlayerId },
+    
+    // lifecycle
     { "register", RegisterObject },
+    { "register_scene_object", RegisterSceneObject },
     { "destroy", DestroyObject },
     { "scene_change", SceneChange },
+
+    // rpc and events
     { "send_rpc", SendRpc },
     { "on_event", OnEvent },
+
+    // connection state
     { "is_connected", IsConnected },
     { "is_running", IsRunning },
     { "is_in_room", IsInRoom },
     { "is_joining_or_in_room", IsJoiningOrInRoom },
-    { "enable_debug", EnableDebug },
+
+    // ownership
+    { "get_owner", GetOwner },
+    { "is_owner", IsOwner },
+    { "has_owner", HasOwner },
+    { "set_want_owner", SetWantOwner },
+    { "set_dont_want_owner", SetDontWantOwner },
+    { "clear_owner_cooldown", ClearOwnerCooldown },
+
     { 0, 0 }
 };
 
@@ -1255,12 +1509,11 @@ dmExtension::Result UpdateFusion(dmExtension::Params* params)
             g_Ctx->m_FusionClient->UpdateFrameBegin(dt);
             Fusion_TickAfterFrameBegin(dt);
         }
-        else
-        {
-            g_Ctx->m_FusionClient->UpdateFrameEnd();
-            g_Ctx->m_FusionClient->UpdateFrameBegin(dt);
-        }
-
+        // else
+        // {
+        //     g_Ctx->m_FusionClient->UpdateFrameEnd();
+        //     g_Ctx->m_FusionClient->UpdateFrameBegin(dt);
+        // }
     }
 
     return dmExtension::RESULT_OK;

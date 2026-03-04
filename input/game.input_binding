@@ -26,6 +26,10 @@ key_trigger {
   input: KEY_TAB
   action: "toggle_debug"
 }
+key_trigger {
+  input: KEY_R
+  action: "rpc"
+}
 mouse_trigger {
   input: MOUSE_BUTTON_LEFT
   action: "touch"

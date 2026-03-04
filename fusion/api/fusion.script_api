@@ -67,6 +67,15 @@
 
   - name: register
     type: function
+    desc: Register a scene object. 
+    parameters:
+    - name: id
+      type: string
+    - name: scene
+      type: number
+
+  - name: register
+    type: function
     desc: Register an object. 
     parameters:
     - name: id
@@ -113,4 +122,92 @@
     parameters:
     - name: listener
       type: function
+
+  - name: get_local_player_id
+    type: function
+    desc: Get the player id of the local client
+    returns:
+    - name: The
+      type: number
+      desc: |
+        Player id of the local client
+        
+
+  - name: get_owner
+    type: function
+    desc: Get the player id of the current owner of an object
+    parameters:
+    - name: id
+      type: string
+      desc: |
+        Id of the object to get the owner for
+        
+    returns:
+    - name: The
+      type: number
+      desc: |
+        Player id of the object's owner
+        
+
+  - name: is_owner
+    type: function
+    desc: Check if the local client is the owner of an object
+    parameters:
+    - name: id
+      type: string
+      desc: |
+        Id of the object
+        
+    returns:
+    - name: True
+      type: boolean
+      desc: |
+        If the local client is the owner of the object
+        
+
+  - name: has_owner
+    type: function
+    desc: Check if an object has an owner
+    parameters:
+    - name: id
+      type: string
+      desc: |
+        Id of the object
+        
+    returns:
+    - name: True
+      type: boolean
+      desc: |
+        If the object has an owner
+        
+
+  - name: set_want_owner
+    type: function
+    desc: Signal desire for the local client to own an object
+    parameters:
+    - name: id
+      type: string
+      desc: |
+        Id of the object to own
+        
+
+  - name: set_dont_want_owner
+    type: function
+    desc: Signal desire for the local client to no longer own an object
+    parameters:
+    - name: id
+      type: string
+      desc: |
+        Id of the object to disown
+        
+
+  - name: clear_owner_cooldown
+    type: function
+    desc: Explicitly clear the ownership cooldown
+    parameters:
+    - name: id
+      type: string
+      desc: |
+        Id of the object to clear cooldown for
+        
 
