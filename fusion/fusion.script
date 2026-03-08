@@ -1,5 +1,19 @@
 go.property("factory", msg.url())
 go.property("remote_object", false)
+go.property("is_scene_object", false)
+
+go.property("ownermode_transaction", false)
+go.property("ownermode_dynamic", false)
+go.property("ownermode_masterclient", true)
+
+go.property("settings_none", true)
+go.property("settings_owner_leaves_owner_to_none", false)
+go.property("settings_global_instance", false)
+
+go.property("interestmode_all", true)
+go.property("interestmode_area", false)
+go.property("interestmode_assigned", false)
+
 
 function init(self)
 	print("init", go.get_id(), self.remote_object, os.date())
@@ -18,9 +32,28 @@ end
 
 function on_message(self, message_id, message, sender)
 	if message_id == hash("register_object") then
-		print("init", go.get_id())
+		print("on_message register_object", go.get_id())
 		local scene = 0
-		print("calling fusion.register()", go.get_id())
-		fusion.register(go.get_id(), scene, self.factory)
+		local options = {}
+		if self.ownermode_transaction  then options.owner_mode = fusion.OWNERMODE_TRANSACTION end
+		if self.ownermode_dynamic      then options.owner_mode = fusion.OWNERMODE_DYNAMIC end
+		if self.ownermode_masterclient then options.owner_mode = fusion.OWNERMODE_MASTERCLIENT end
+
+		if self.settings_none                       then options.settings = fusion.SETTINGS_NONE end
+		if self.settings_owner_leaves_owner_to_none then options.settings = fusion.OBJECTSETTINGS_OWNERLEAVESOWNERTONONE end
+		if self.settings_global_instance            then options.settings = fusion.OBJECTSETTINGS_ISGLOBALINSTANCE end
+
+		if self.interestmode_all      then options.interest_mode = fusion.INTERESTMODE_ALL end
+		if self.interestmode_area     then options.interest_mode = fusion.INTERESTMODE_AREA end
+		if self.interestmode_assigned then options.interest_mode = fusion.INTERESTMODE_ASSIGNED end
+
+		if self.is_scene_object then
+			print("calling fusion.register_scene_object()", go.get_id())
+			fusion.register_scene_object(go.get_id(), scene, self.factory, options)
+		else
+			print("calling fusion.register_object()", go.get_id())
+			fusion.register_object(go.get_id(), scene, self.factory, options)
+		end
+		
 	end
 end

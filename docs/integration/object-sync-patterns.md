@@ -10,14 +10,14 @@ Every frame, the integration runs a two-phase sync cycle:
 
 ```
 Authority client                          Non-authority client
-     |                                           |
-     |  sync_outbound()                          |
-     |  ┌──────────────┐                         |
-     |  │ Read engine   │                         |
-     |  │ properties    │                         |
-     |  │ Write to      │                         |
-     |  │ Words buffer  │                         |
-     |  └──────┬───────┘                         |
+     |                                            |
+     |  sync_outbound()                           |
+     |  ┌──────────────┐                          |
+     |  │ Read engine  │                          |
+     |  │ properties   │                          |
+     |  │ Write to     │                          |
+     |  │ Words buffer │                          |
+     |  └──────┬───────┘                          |
      |         v                                  |
      |  UpdateFrameEnd()  ──── network ────>  UpdateFrameBegin()
      |                                            |

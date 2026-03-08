@@ -85,7 +85,7 @@
 
   - name: destroy
     type: function
-    desc: Destroy an object. 
+    desc: Destroy a local object. 
     parameters:
     - name: id
       type: string
@@ -210,4 +210,100 @@
       desc: |
         Id of the object to clear cooldown for
         
+
+  - name: player_count
+    type: function
+    desc: Get player count
+    returns:
+    - name: count
+      type: number
+      desc: |
+        Number of players
+        
+
+  - name: is_master_client
+    type: function
+    desc: Get if this client is the room's master
+    returns:
+    - name: master
+      type: boolean
+      desc: |
+        True if this client is the room's master
+        
+
+  - name: get_rtt
+    type: function
+    desc: Get round trip time
+    returns:
+    - name: rtt
+      type: number
+      desc: |
+        Round trip time in seconds
+        
+
+  - name: network_time_diff
+    type: function
+    desc: Get raw offset between server time and local time. A positive value means the server clock is ahead of the local clock.
+    returns:
+    - name: diff
+      type: number
+      desc: |
+        Time diff
+        
+
+  - name: area_of_interest_used
+    type: function
+    desc: Check if the room has AOI enabled..
+    returns:
+    - name: aoi_used
+      type: boolean
+      desc: |
+        True if the room/session has AOI enabled
+        
+
+  - name: area_of_interest_cell_size
+    type: function
+    desc: Get the AOI cell size. Configured on a room level.
+    returns:
+    - name: size
+      type: number
+      desc: |
+        The cell size, uniform across all three axis.
+        
+
+  - name: OWNERMODE_TRANSACTION
+    type: number
+    desc: OWNERMODE_TRANSACTION
+
+  - name: OWNERMODE_DYNAMIC
+    type: number
+    desc: OWNERMODE_DYNAMIC
+
+  - name: OWNERMODE_MASTERCLIENT
+    type: number
+    desc: OWNERMODE_MASTERCLIENT
+
+  - name: OBJECTSETTINGS_NONE
+    type: number
+    desc: OBJECTSETTINGS_NONE
+
+  - name: OBJECTSETTINGS_OWNERLEAVESOWNERTONONE
+    type: number
+    desc: OBJECTSETTINGS_OWNERLEAVESOWNERTONONE
+
+  - name: OBJECTSETTINGS_ISGLOBALINSTANCE
+    type: number
+    desc: OBJECTSETTINGS_ISGLOBALINSTANCE
+
+  - name: INTERESTMODE_ALL
+    type: number
+    desc: INTERESTMODE_ALL
+
+  - name: INTERESTMODE_AREA
+    type: number
+    desc: INTERESTMODE_AREA
+
+  - name: INTERESTMODE_ASSIGNED
+    type: number
+    desc: INTERESTMODE_ASSIGNED
 
