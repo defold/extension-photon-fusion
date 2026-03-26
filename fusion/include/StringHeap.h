@@ -67,8 +67,8 @@ namespace SharedMode
 
         std::set<uint32_t, std::greater<uint32_t>> free_ids;  // Sorted based on index, lowest index at the end (the one we grab)
 
-        BufferT<CharType> StringData{};
-        BufferT<CharType> Shadow{};
+        BufferT<PhotonCommon::CharType> StringData{};
+        BufferT<PhotonCommon::CharType> Shadow{};
         BufferT<Tick> Ticks{};
 
         uint32_t HeapSize = 0;
@@ -90,13 +90,16 @@ namespace SharedMode
 
         void Resize(uint32_t size);
 
-        StringHandle allocate_string(const CharType* str);
+        StringHandle allocate_string(const PhotonCommon::CharType* str);
 
-        const CharType* resolve_string(const StringHandle& h, StringMessage& OutStatus);
+        const PhotonCommon::CharType* resolve_string(const StringHandle& h, StringMessage& OutStatus);
 
         StringHandle free_handle(const StringHandle& h);
 
+        bool is_valid_handle(const StringHandle& handle);
+
         uint32_t GetStringLength(const StringHandle& h);
+
         void LogStringData(const StringHandle& h);
 
         void compact_heap();

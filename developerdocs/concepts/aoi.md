@@ -1,174 +1,269 @@
 # Area of Interest (AOI)
 
-Area of Interest is a bandwidth optimization that limits which objects a client receives state updates for. Instead of replicating every object to every client, AOI uses a 3D grid to determine proximity. Clients only receive updates for objects within their interest region.
+Area of Interest is a bandwidth optimization that limits which objects a client receives state updates for. Instead of replicating every object to every client, AOI uses interest keys to categorize objects and player subscriptions to control visibility. Clients only receive updates for objects whose interest key matches one of their subscribed keys.
 
-## Grid Model
+## Interest Key Model
 
-AOI divides the world into a uniform 3D grid of cubic cells. Each cell is identified by an `AOILocation`:
+Unlike grid-based AOI systems, Fusion 3.0 uses a key-based model. Each object is assigned an interest key (a `uint64_t`), and each player subscribes to a set of keys. The server matches object keys against player subscriptions to determine which objects to replicate.
+
+```
+Object A  --[key: 42]-->  Server  <--[subscribed: 42, 99]--> Player 1
+Object B  --[key: 99]-->  Server  <--[subscribed: 42]--> Player 2
+Object C  --[global]-->   Server  (sent to everyone)
+
+Player 1 receives: A, B, C
+Player 2 receives: A, C
+```
+
+## InterestKeyType
+
+Each object's interest key has a type that determines how it is handled:
 
 ```cpp
-struct AOILocation {
-    int32_t X{0};
-    int32_t Y{0};
-    int32_t Z{0};
-
-    AOILocation() = default;
-    AOILocation(int32_t x, int32_t y, int32_t z);
-
-    AOILocation GetNeighbour(int32_t xOffset = 0, int32_t yOffset = 0, int32_t zOffset = 0);
+enum class InterestKeyType : uint8_t {
+    Global = 0,   // Replicated to all clients regardless of subscriptions
+    Area   = 1,   // Matched against area key subscriptions
+    User   = 2    // Matched against user key subscriptions
 };
 ```
 
-Coordinates are **cell indices**, not world positions. To convert world coordinates to cell indices, use:
-
-```cpp
-AOILocation Client::CalculateAreaOfInterestLocation(double x, double y, double z) const;
-```
-
-This divides each coordinate by the configured cell size and floors to the nearest integer.
-
-### Cell Size
-
-The cell size is configured at the room/session level and queried via:
-
-```cpp
-int32_t Client::AreaOfInterestCellSize() const;
-```
-
-A typical cell size might be 32, 64, or 128 world units. Smaller cells provide finer granularity but increase protocol overhead. The cell size is uniform across all three axes.
-
-## Interest Modes
-
-Each object declares its interest mode at creation time via `ObjectFlags`:
-
-```cpp
-enum class ObjectInterestModes : uint8_t {
-    All      = 0,   // Replicated to all clients regardless of position
-    Area     = 1,   // Replicated only to clients with overlapping interest
-    Assigned = 2,   // Replicated only to explicitly assigned clients
-};
-```
-
-| Mode | Behavior | Use Case |
+| Type | Behavior | Use Case |
 |------|----------|----------|
-| `All` | Every client receives updates. AOI has no effect. | Global state, UI objects, game managers |
-| `Area` | Only clients whose interest region overlaps the object's cell receive updates. | Players, NPCs, world entities |
-| `Assigned` | Updates are sent only to explicitly assigned clients (server plugin feature). | Private inventory, team-specific data |
+| `Global` | Sent to all clients. No subscription needed. | Game managers, scoreboards, UI state |
+| `Area` | Matched against area subscriptions. Ephemeral (cleared each update). | Spatial regions, level zones |
+| `User` | Matched against user subscriptions. Persistent until removed. | Teams, parties, private channels |
 
-The interest mode is set in the `ObjectFlags` passed to `CreateObject`, `CreateSceneObject`, or `CreateGlobalInstanceObject`:
+## Setting Object Interest Keys
 
-```cpp
-ObjectFlags flags(
-    ObjectSettingsFlags::None,
-    ObjectOwnerModes::Dynamic,
-    ObjectInterestModes::Area     // <-- AOI-managed
-);
-```
+Each object declares its interest key via one of three methods on `Client`:
 
-## Setting Object Location
-
-For objects using `ObjectInterestModes::Area`, the integration layer must update the object's AOI position each frame:
+### Global Interest
 
 ```cpp
-void Client::SetAreaOfInterestLocation(const Object* obj, AOILocation location);
+void Client::SetGlobalInterestKey(Object* obj);
 ```
 
-This writes the location into the object's [ObjectTail](serialization.md#objecttail) (the reserved 6-word area at the end of the Words buffer):
+Makes the object visible to all clients. This is the default for objects that have not been assigned a key.
+
+### Area Interest
+
+```cpp
+void Client::SetAreaInterestKey(Object* obj, uint64_t key);
+```
+
+Assigns an area-type interest key. Only clients subscribed to this key (via `SetAreaKeys()`) receive updates. The key value is application-defined -- it could represent a spatial region, a zone ID, or any grouping concept.
+
+### User Interest
+
+```cpp
+void Client::SetUserInterestKey(Object* obj, uint64_t key);
+```
+
+Assigns a user-type interest key. Only clients subscribed to this key (via `AddUserKey()`) receive updates.
+
+### Clearing
+
+```cpp
+void Client::ClearInterestKey(Object* obj);
+```
+
+Removes the interest key, reverting the object to default behavior.
+
+### Querying
+
+```cpp
+bool Client::HasSetInterestKey(Object* obj);
+InterestKeyType Client::GetInterestKeyType(Object* obj);
+```
+
+## ObjectTail Storage
+
+The interest key is stored in the [ObjectTail](objects.md#objecttail) at the end of the Words buffer:
 
 ```cpp
 struct ObjectTail {
-    int32_t AOI_X;       // Cell X
-    int32_t AOI_Y;       // Cell Y
-    int32_t AOI_Z;       // Cell Z
-    int32_t AOI_SET;     // 1 if location has been set
+    int32_t RequiredObjectsCount;
+    uint64_t InterestKey;       // <-- 8 bytes (2 words)
     int32_t Destroyed;
+    int32_t SendRate;
     int32_t Dummy;
 };
 ```
 
-If `AOI_SET` is never set to 1, the object behaves as if it has `InterestModes::All` until a location is provided.
+The `SetGlobalInterestKey`, `SetAreaInterestKey`, and `SetUserInterestKey` methods write to this field. Do not write to the interest key directly -- always use the Client methods, which also track the key type and registration state.
 
-### Location Calculation
+## Player Subscriptions
+
+Each client maintains two independent sets of key subscriptions: area keys and user keys.
+
+### Area Keys
 
 ```cpp
-AOILocation loc = client->CalculateAreaOfInterestLocation(
-    worldPosition.x,
-    worldPosition.y,
-    worldPosition.z
-);
-client->SetAreaOfInterestLocation(obj, loc);
+void Client::SetAreaKeys(const std::vector<std::tuple<uint64_t, uint8_t>>& keys);
 ```
 
-## InterestBox
+Sets the complete list of area key subscriptions. Each entry is a `(key, sendRate)` tuple:
 
-An `InterestBox` defines a client's interest region as an axis-aligned box of cells:
+- `key` -- the interest key value to subscribe to
+- `sendRate` -- desired send rate for objects with this key (lower = faster updates)
+
+Area keys are **ephemeral** -- they are replaced entirely each time `SetAreaKeys()` is called. This is designed for spatial interest that changes every frame (e.g., the player's current region and neighbors).
 
 ```cpp
-struct InterestBox {
-    AOILocation Center{};
-    AOILocation Extents{};
-
-    InterestBox() = default;
-    InterestBox(AOILocation center, AOILocation extents);
+// Subscribe to region 42 at full rate, and neighbor region 43 at half rate
+std::vector<std::tuple<uint64_t, uint8_t>> areaKeys = {
+    {42, 1},   // Full rate
+    {43, 2},   // Half rate
 };
+client->SetAreaKeys(areaKeys);
 ```
 
-The box spans from `Center - Extents` to `Center + Extents` in cell coordinates. An object is "in interest" if its cell falls within any subscribed client's interest box.
+When multiple area keys match the same object, the **minimum send rate** (fastest) is used.
 
-## Client Interest Locations
-
-Each client maintains a set of AOI locations representing its subscribed cells:
+### User Keys
 
 ```cpp
-std::set<AOILocation>& Client::GetAreaOfInterestLocations();
+void Client::AddUserKey(uint64_t key, uint8_t sendRate = 0);
+void Client::RemoveUserKey(uint64_t key);
 ```
 
-The SDK computes which cells the client is interested in based on its interest box configuration. Objects whose `AOILocation` falls within these cells are replicated.
-
-## Object Priority
-
-When multiple objects compete for bandwidth, priority controls which objects are sent first:
+User keys are **persistent** -- they remain active until explicitly removed. This is designed for stable subscriptions like team channels or party membership.
 
 ```cpp
-void Client::SetObjectPriority(ObjectId id, int32_t priority);
+// Subscribe to team channel
+client->AddUserKey(teamId, 1);
+
+// Later: leave team
+client->RemoveUserKey(teamId);
 ```
 
-Higher priority objects are replicated more frequently when bandwidth is constrained. This is sent as an internal RPC (`RPC_InternalObjectPriority`).
-
-Priority is useful for:
-- Nearby objects (higher priority than distant ones)
-- Objects the player is interacting with
-- Critical game state objects
-
-## Checking AOI Configuration
+### Clearing Subscriptions
 
 ```cpp
-bool Client::AreaOfInterestUsed() const;
+void Client::ClearAllKeys();    // Clear both area and user keys
+void Client::ClearAreaKeys();   // Clear only area keys
+void Client::ClearUserKeys();   // Clear only user keys
 ```
 
-Returns `true` if the room/session has AOI enabled. When AOI is not used, all objects are replicated to all clients regardless of `InterestModes` settings.
+### Querying Subscriptions
+
+```cpp
+std::vector<std::tuple<uint64_t, uint8_t>> Client::GetAllAreaKeys() const;
+std::vector<std::tuple<uint64_t, uint8_t>> Client::GetAllUserKeys() const;
+std::map<uint64_t, uint8_t>& Client::GetInterestKeys();
+```
+
+## Interest Enter/Exit Callbacks
+
+When an object enters or exits a client's interest set, the SDK fires:
+
+```cpp
+Broadcaster<void(ObjectRoot*)> OnInterestEnter;
+Broadcaster<void(ObjectRoot*)> OnInterestExit;
+```
+
+### OnInterestEnter
+
+Fires when an object becomes visible to the local client. This happens when:
+
+- The object's interest key is added to the client's subscriptions.
+- The object's interest key changes to one the client is subscribed to.
+- A new object is created with a key the client is already subscribed to.
+
+On enter, the SDK performs a **snap** -- the full object state is sent immediately rather than waiting for the next delta update. This ensures the client sees the object in its current state without interpolation artifacts.
+
+### OnInterestExit
+
+Fires when an object leaves the client's interest set. The client stops receiving updates for this object. The engine integration should typically:
+
+- Hide or despawn the engine entity.
+- Stop reading from the object's Words buffer (data will become stale).
+
+```cpp
+subs += client->OnInterestEnter.Subscribe([](SharedMode::ObjectRoot* obj) {
+    // Object became visible -- instantiate or show engine entity
+    spawn_or_show(obj);
+});
+
+subs += client->OnInterestExit.Subscribe([](SharedMode::ObjectRoot* obj) {
+    // Object left interest -- hide or despawn engine entity
+    hide_or_despawn(obj);
+});
+```
+
+## Multiple Area Key Merging
+
+When a client subscribes to multiple area keys and an object matches more than one subscription, the server uses the **minimum send rate** (fastest updates) among all matching keys:
+
+```
+Area keys: { (42, rate=4), (43, rate=1) }
+Object with key 42: send rate = 4
+Object with key 43: send rate = 1
+Object matching both 42 and 43: send rate = min(4, 1) = 1
+```
+
+## Complete Example
+
+```cpp
+// === Object side: assign interest keys ===
+
+// Player avatar: area-based interest
+client->SetAreaInterestKey(playerObj, regionId);
+
+// Scoreboard: global (visible to all)
+client->SetGlobalInterestKey(scoreboardObj);
+
+// Team chat relay: user key based
+client->SetUserInterestKey(teamRelayObj, teamId);
+
+
+// === Player side: manage subscriptions ===
+
+// Subscribe to nearby regions (updated each frame)
+auto nearbyRegions = calculate_nearby_regions(playerPosition);
+std::vector<std::tuple<uint64_t, uint8_t>> areaKeys;
+for (auto& [regionId, distance] : nearbyRegions) {
+    uint8_t rate = distance == 0 ? 1 : 4;  // Close = fast, far = slow
+    areaKeys.push_back({regionId, rate});
+}
+client->SetAreaKeys(areaKeys);
+
+// Subscribe to team channel (once, persistent)
+client->AddUserKey(myTeamId, 1);
+
+
+// === React to enter/exit ===
+
+subs += client->OnInterestEnter.Subscribe([](SharedMode::ObjectRoot* obj) {
+    instantiate_visual(obj);
+});
+
+subs += client->OnInterestExit.Subscribe([](SharedMode::ObjectRoot* obj) {
+    destroy_visual(obj);
+});
+```
 
 ## Interaction with Ownership
 
-AOI and [ownership](ownership.md) are independent systems, but they interact:
+AOI and [ownership](ownership.md) are independent systems:
 
 - An owner always receives updates for their own objects regardless of AOI.
-- When an object leaves a non-owner client's interest region, the client stops receiving updates. If the object re-enters, the SDK resends the full state.
+- When an object leaves a non-owner's interest, the client stops receiving updates. Re-entering triggers a snap.
 - Ownership transfer (`SetWantOwner`) works regardless of AOI -- a client can request ownership of an object outside its interest region.
 
-## Performance Considerations
+## Common Mistakes
 
-| Factor | Impact |
-|--------|--------|
-| Cell size too small | More cells to track, higher protocol overhead |
-| Cell size too large | Less filtering, more unnecessary updates |
-| Many `InterestModes::All` objects | Reduces AOI effectiveness |
-| Not setting AOI location | Objects default to global visibility |
-| Priority not set | All objects treated equally, bandwidth distribution is uniform |
+| Mistake | Symptom |
+|---------|---------|
+| Not calling `SetAreaKeys` each frame | Area subscriptions stale, objects disappear |
+| Using area keys for persistent subscriptions | Keys cleared on next `SetAreaKeys` call |
+| Not handling `OnInterestExit` | Stale engine entities with outdated state |
+| Forgetting `SetGlobalInterestKey` on global objects | Objects only visible to subscribed clients |
+| Setting interest key without player subscriptions | Object invisible to all clients |
 
-## See Also
+## Related
 
-- [Object Creation](object-creation.md) -- `ObjectFlags` including `InterestModes`
-- [Serialization](serialization.md) -- `ObjectTail` where AOI data is stored
+- [Objects](objects.md) -- ObjectTail where interest key is stored
 - [Ownership](ownership.md) -- Interaction between AOI and ownership
-- [Client API Reference](../reference/client-api.md) -- Full AOI method signatures
+- [Object Creation](object-creation.md) -- Interest keys set after creation
+- [Frame Loop](frame-loop.md) -- When interest callbacks fire

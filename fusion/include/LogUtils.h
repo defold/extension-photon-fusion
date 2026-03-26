@@ -1,7 +1,6 @@
 // Copyright Exit Games GmbH. All Rights Reserved.
 
-#ifndef SHAREDCLIENT_LOGUTILS_C
-#define SHAREDCLIENT_LOGUTILS_C
+#pragma once
 
 #include <cstdint>
 // ReSharper disable once CppUnusedIncludeDirective
@@ -9,7 +8,7 @@
 
 #include "StringType.h"
 
-namespace SharedMode::Logging {
+namespace PhotonCommon {
     enum LogLevel : uint8_t {
         Trace = 1 << 0,
         Debug = 1 << 1,
@@ -41,5 +40,3 @@ namespace SharedMode::Logging {
 
     void Log(LogLevel logLevel, const CharType* Log);
 }
-
-#endif // SHAREDCLIENT_LOGUTILS_C

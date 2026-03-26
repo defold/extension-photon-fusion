@@ -1,8 +1,8 @@
 # Engine Binding
 
-This guide covers the patterns for connecting Fusion SDK objects to engine-side representations: the `Object::Engine` pointer, bidirectional registry design, type descriptor and spawnable type registration, and the spawner/factory pattern.
+This guide covers the patterns for connecting Fusion SDK objects to engine-side representations: the `Object::Engine` pointer, bidirectional registry design, type hash conventions, spawnable type registration, and the spawner/factory pattern.
 
-These patterns are engine-agnostic. We show the generic C++ approach, then reference how the Godot and Unreal integrations implement each pattern.
+These patterns are engine-agnostic. The examples use generic C++ constructs that can be adapted to any game engine.
 
 ## Object::Engine Pointer
 
@@ -24,79 +24,119 @@ SharedMode::ObjectRoot* fusionObj = client->CreateObject(/*...*/);
 fusionObj->Engine = myEngineNode;
 
 // Later, retrieve it in callbacks
-client->OnObjectOwnerChanged = [](SharedMode::ObjectRoot* obj) {
-    auto* node = static_cast<MyEngineNode*>(obj->Engine);
-    node->OnAuthorityChanged();
-};
+subs += client->OnObjectOwnerChanged.Subscribe(
+    [](SharedMode::ObjectRoot* obj) {
+        auto* node = static_cast<MyEngineNode*>(obj->Engine);
+        if (node) {
+            node->OnAuthorityChanged();
+        }
+    }
+);
 ```
 
-**Lifetime note:** You must null out `Engine` when the engine-side object is destroyed, and check for null before dereferencing. The Fusion object may outlive the engine representation (e.g., during scene transitions).
+**Lifetime rule:** You must null out `Engine` when the engine-side object is destroyed, and check for null before dereferencing. The Fusion object may outlive the engine representation (e.g., during scene transitions or async destruction).
 
 ## Bidirectional Registry Pattern
 
-The `Engine` pointer gives you Fusion-to-engine lookup. But you also need engine-to-Fusion lookup: given an engine object, find its Fusion counterpart.
+The `Engine` pointer gives you Fusion-to-engine lookup. But you also need engine-to-Fusion lookup: given an engine object, find its Fusion counterpart (e.g., for despawning or RPC sending).
 
-The solution is a bidirectional registry that maps between engine object IDs and Fusion `ObjectId`s.
+### PackedObjectId Helper
 
-### Design
+Fusion's `ObjectId` has two `uint32_t` components: `Origin` (PlayerId) and `Counter`. The `ObjectId` struct has a built-in conversion to `uint64_t`:
+
+```cpp
+// ObjectId has an implicit conversion operator to uint64_t:
+//   operator uint64_t() const;
+// And a constructor from uint64_t:
+//   explicit ObjectId(const uint64_t& packed);
+
+// Pack:
+SharedMode::ObjectId id(origin, counter);
+uint64_t packed = static_cast<uint64_t>(id);
+
+// Unpack:
+SharedMode::ObjectId unpacked(packed);
+// unpacked.Origin == origin
+// unpacked.Counter == counter
+```
+
+The packing layout is: low 32 bits = Origin, high 32 bits = Counter.
+
+### Registry Design
 
 ```cpp
 class ObjectRegistry {
-    // Engine ID -> packed Fusion ID
+    // Engine ID -> packed Fusion ObjectId
     std::unordered_map<uint64_t, uint64_t> engineToFusion;
-    // Packed Fusion ID -> Engine ID
+    // Packed Fusion ObjectId -> Engine ID
     std::unordered_map<uint64_t, uint64_t> fusionToEngine;
 
 public:
-    void Register(uint64_t engineId, uint32_t origin, uint32_t counter);
-    void UnregisterByEngineId(uint64_t engineId);
-    void UnregisterByFusionId(uint32_t origin, uint32_t counter);
-
-    bool HasEngineId(uint64_t engineId) const;
-    bool HasFusionId(uint32_t origin, uint32_t counter) const;
-
-    uint64_t GetEngineId(uint32_t origin, uint32_t counter) const;
-    void GetFusionId(uint64_t engineId, uint32_t& origin, uint32_t& counter) const;
-
-    void Clear();
-};
-```
-
-### Packing ObjectId
-
-Fusion's `ObjectId` has two components: `Origin` (PlayerId, uint32) and `Counter` (uint32). Pack them into a single `uint64_t` for use as a map key:
-
-```cpp
-struct PackedObjectId {
-    uint64_t value = 0;
-
-    PackedObjectId() = default;
-
-    PackedObjectId(uint32_t origin, uint32_t counter) {
-        // Low 32 bits = Origin, High 32 bits = Counter
-        value = (static_cast<uint64_t>(counter) << 32) |
-                 static_cast<uint32_t>(origin);
+    void Register(uint64_t engineId, SharedMode::ObjectId fusionId) {
+        uint64_t packed = static_cast<uint64_t>(fusionId);
+        engineToFusion[engineId] = packed;
+        fusionToEngine[packed] = engineId;
     }
 
-    void Unpack(uint32_t& origin, uint32_t& counter) const {
-        origin = static_cast<uint32_t>(value & 0xFFFFFFFF);
-        counter = static_cast<uint32_t>(value >> 32);
+    void UnregisterByEngineId(uint64_t engineId) {
+        auto it = engineToFusion.find(engineId);
+        if (it != engineToFusion.end()) {
+            fusionToEngine.erase(it->second);
+            engineToFusion.erase(it);
+        }
+    }
+
+    void UnregisterByFusionId(SharedMode::ObjectId fusionId) {
+        uint64_t packed = static_cast<uint64_t>(fusionId);
+        auto it = fusionToEngine.find(packed);
+        if (it != fusionToEngine.end()) {
+            engineToFusion.erase(it->second);
+            fusionToEngine.erase(it);
+        }
+    }
+
+    bool HasEngineId(uint64_t engineId) const {
+        return engineToFusion.count(engineId) > 0;
+    }
+
+    bool HasFusionId(SharedMode::ObjectId fusionId) const {
+        return fusionToEngine.count(static_cast<uint64_t>(fusionId)) > 0;
+    }
+
+    uint64_t GetEngineId(SharedMode::ObjectId fusionId) const {
+        uint64_t packed = static_cast<uint64_t>(fusionId);
+        auto it = fusionToEngine.find(packed);
+        return (it != fusionToEngine.end()) ? it->second : 0;
+    }
+
+    SharedMode::ObjectId GetFusionId(uint64_t engineId) const {
+        auto it = engineToFusion.find(engineId);
+        if (it != engineToFusion.end()) {
+            return SharedMode::ObjectId(it->second);
+        }
+        return SharedMode::ObjectId(0, 0);
+    }
+
+    void Clear() {
+        engineToFusion.clear();
+        fusionToEngine.clear();
     }
 };
 ```
 
 ### Registration Points
 
-Register objects at these points in the lifecycle:
+Register and unregister objects at these lifecycle events:
 
 | Event | Action |
 |-------|--------|
-| After `CreateObject()` + scene instantiation | `Register(engineId, obj->Id.Origin, obj->Id.Counter)` |
-| In `OnObjectCreated` callback | `Register(engineId, obj->Id.Origin, obj->Id.Counter)` |
-| After `CreateSceneObject()` | `Register(engineId, obj->Id.Origin, obj->Id.Counter)` |
-| After `CreateSubObject()` + `AddSubObject()` | `Register(engineId, child->Id.Origin, child->Id.Counter)` |
-| In `OnSubObjectCreated` callback | `Register(engineId, child->Id.Origin, child->Id.Counter)` |
-| In `OnObjectDestroyed` callback | `UnregisterByFusionId(obj->Id.Origin, obj->Id.Counter)` |
+| After `CreateObject()` + engine instantiation | `Register(engineId, obj->Id)` |
+| In `OnObjectReady` callback | `Register(engineId, obj->Id)` |
+| After `CreateSceneObject()` | `Register(engineId, obj->Id)` |
+| After `CreateSubObject()` + `AddSubObject()` | `Register(engineId, child->Id)` |
+| In `OnSubObjectCreated` callback | `Register(engineId, child->Id)` |
+| In `OnObjectDestroyed` callback | `UnregisterByFusionId(obj->Id)` |
+| In `OnSubObjectDestroyed` callback | `UnregisterByFusionId(child->Id)` |
 | When engine object is freed | `UnregisterByEngineId(engineId)` |
 
 ### Usage: RPC Routing
@@ -104,11 +144,10 @@ Register objects at these points in the lifecycle:
 The registry enables routing incoming RPCs to the correct engine object:
 
 ```cpp
-client->OnRpc = [&](SharedMode::Rpc& rpc) {
+subs += client->OnRpc.Subscribe([&](SharedMode::Rpc& rpc) {
     if (rpc.TargetObject.IsSome()) {
         // Object-targeted RPC
-        uint64_t engineId = registry.GetEngineId(
-            rpc.TargetObject.Origin, rpc.TargetObject.Counter);
+        uint64_t engineId = registry.GetEngineId(rpc.TargetObject);
         auto* node = GetEngineObject(engineId);
         if (node) {
             DispatchRpc(node, rpc);
@@ -117,7 +156,7 @@ client->OnRpc = [&](SharedMode::Rpc& rpc) {
         // Broadcast RPC (TargetObject is {0, 0})
         DispatchBroadcastRpc(rpc);
     }
-};
+});
 ```
 
 ### Usage: Sub-Object Parent Lookup
@@ -125,113 +164,30 @@ client->OnRpc = [&](SharedMode::Rpc& rpc) {
 When a sub-object arrives, find its parent's engine representation:
 
 ```cpp
-client->OnSubObjectCreated = [&](SharedMode::ObjectChild* child) {
-    uint64_t parentEngineId = registry.GetEngineId(
-        child->Parent.Origin, child->Parent.Counter);
+subs += client->OnSubObjectCreated.Subscribe([&](SharedMode::ObjectChild* child) {
+    uint64_t parentEngineId = registry.GetEngineId(child->Parent);
     auto* parentNode = GetEngineObject(parentEngineId);
-    // ...
-};
+    if (parentNode) {
+        HandleSubObjectCreated(child, parentNode);
+    }
+});
 ```
 
-### Metadata Extension
+## Type Hash Convention
 
-The registry can store additional metadata per object for spawn/despawn:
-
-```cpp
-struct ObjectMetadata {
-    uint32_t sceneIndex = 0;
-    uint64_t typeHash = 0;
-    std::string scenePath;
-};
-
-// Extended registration
-std::unordered_map<uint64_t, ObjectMetadata> metadata; // keyed by engine ID
-
-void RegisterWithMetadata(uint64_t engineId, uint32_t origin, uint32_t counter,
-                          uint64_t typeHash, const std::string& scenePath) {
-    Register(engineId, origin, counter);
-    metadata[engineId] = {0, typeHash, scenePath};
-}
-```
-
-**Godot integration**: `FusionObjectRegistry` implements this exact pattern with `register_object_with_metadata()` storing `scene_index`, `type_hash`, and `scene_path`.
-
-## Type Descriptor / Spawnable Type Registration
-
-When a remote client creates an object, the local client needs to know which scene/prefab to instantiate. This is solved by a **spawnable type registry** that maps type hashes to scene resources.
-
-### Type Hash Convention
+When a remote client creates an object, the local client needs to know which scene/prefab to instantiate. This is solved by matching `TypeRef::Hash` values.
 
 A type hash is a `uint64_t` that uniquely identifies a scene/prefab type. The convention is to hash the resource path:
 
 ```cpp
-// Godot: use String::hash() of the .tscn path
-uint64_t typeHash = scenePath.hash();
-
-// Generic: use CRC64 from the SDK
+// Using the SDK's built-in CRC64:
 uint64_t typeHash = SharedMode::CRC64(path.c_str(), path.length());
+
+// Or using engine-specific hashing:
+// uint64_t typeHash = scenePath.hash();
 ```
 
-The type hash is stored in `TypeRef::Hash` and set at object creation time. Remote clients receive it via `ObjectRoot::Type.Hash` in the `OnObjectCreated` callback.
-
-### Registration
-
-Each spawner maintains a list of spawnable scenes:
-
-```cpp
-struct SpawnableType {
-    std::string scenePath;
-    uint64_t typeHash;
-    // Cached scene resource (lazy-loaded)
-    void* cachedScene = nullptr;
-};
-
-std::vector<SpawnableType> spawnableTypes;
-
-void RegisterSpawnableScene(const std::string& path) {
-    SpawnableType type;
-    type.scenePath = path;
-    type.typeHash = HashPath(path);
-    spawnableTypes.push_back(type);
-}
-```
-
-### Matching on Remote Creation
-
-When `OnObjectCreated` fires, find the matching spawnable type:
-
-```cpp
-SpawnableType* FindByTypeHash(uint64_t hash) {
-    for (auto& type : spawnableTypes) {
-        if (type.typeHash == hash) {
-            return &type;
-        }
-    }
-    return nullptr;
-}
-
-client->OnObjectCreated = [&](SharedMode::ObjectRoot* obj) {
-    SpawnableType* type = FindByTypeHash(obj->Type.Hash);
-    if (!type) {
-        printf("Unknown object type: %llu\n", obj->Type.Hash);
-        return;
-    }
-
-    // Load and instantiate the scene
-    auto* instance = InstantiateScene(type->scenePath);
-
-    // Deserialize spawn data from Header
-    DeserializeSpawnData(instance, obj->Header);
-
-    // Register in the bidirectional registry
-    registry.Register(GetEngineId(instance), obj->Id.Origin, obj->Id.Counter);
-
-    // Store engine pointer on Fusion object
-    obj->Engine = instance;
-};
-```
-
-### TypeRef Structure
+The type hash is set at object creation time via `TypeRef::Hash` and is available on remote objects via `Object::Type.Hash`.
 
 ```cpp
 struct TypeRef {
@@ -240,80 +196,126 @@ struct TypeRef {
 };
 ```
 
-`TypeRef` is passed to `CreateObject()`, `CreateSceneObject()`, and `CreateSubObject()`. It is available on remote objects via `Object::Type`.
+## Spawnable Type Registry
+
+Each spawner maintains a list of spawnable scenes/prefabs:
+
+```cpp
+struct SpawnableType {
+    std::string scenePath;
+    uint64_t typeHash;
+    void* cachedResource = nullptr; // Lazy-loaded scene resource
+};
+
+class SpawnableTypeRegistry {
+    std::vector<SpawnableType> types;
+
+public:
+    void RegisterScene(const std::string& path) {
+        SpawnableType type;
+        type.scenePath = path;
+        type.typeHash = SharedMode::CRC64(path.c_str(), path.length());
+        types.push_back(type);
+    }
+
+    SpawnableType* FindByTypeHash(uint64_t hash) {
+        for (auto& type : types) {
+            if (type.typeHash == hash) {
+                return &type;
+            }
+        }
+        return nullptr;
+    }
+
+    bool HasTypeHash(uint64_t hash) const {
+        for (const auto& type : types) {
+            if (type.typeHash == hash) return true;
+        }
+        return false;
+    }
+};
+```
 
 ## Spawner / Factory Pattern
 
-A spawner is the engine-side component that manages the lifecycle of networked objects: registration, local spawning, remote instantiation, and despawning.
+A spawner is the engine-side component that manages the full lifecycle of networked objects: registration, local spawning, remote instantiation, and despawning.
 
 ### Spawner Responsibilities
 
 | Responsibility | When |
 |----------------|------|
-| Register spawnable scenes | At initialization / enter tree |
-| Local spawn: instantiate + `CreateObject()` + serialize + register | When authority wants to create an object |
-| Remote spawn: handle `OnObjectCreated` + instantiate + deserialize + register | When notified of remote creation |
-| Despawn: `DestroyObjectLocal()` + free engine object + unregister | When authority wants to remove an object |
-| Remote despawn: handle `OnObjectDestroyed` + free engine object + unregister | When notified of remote destruction |
+| Register spawnable scenes | At initialization |
+| Local spawn | When authority wants to create an object |
+| Remote spawn | When `OnObjectReady` fires with a matching type hash |
+| Local despawn | When authority wants to remove an object |
+| Remote despawn | When `OnObjectDestroyed` fires |
 
 ### Local Spawn Flow
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│ 1. Load scene, instantiate off-tree                              │
-│ 2. Apply initial data (position, properties, etc.)               │
-│ 3. Find FusionSynchronizer, compute word count                   │
-│ 4. Serialize spawn-time properties to header (PackedByteArray)   │
-│ 5. Call CreateObject(totalWords, typeRef, header, ...)           │
-│ 6. SetSendUpdates(false) on the new object                      │
-│ 7. Copy serialized data to Words buffer via memcpy               │
-│ 8. Bind synchronizer to Fusion object                            │
-│ 9. Register in object registry                                   │
-│ 10. Add instance to scene tree                                    │
-│ 11. SetSendUpdates(true), SetHasValidData(true)                  │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  1. Load scene resource, instantiate off-tree                        │
+│  2. Apply initial data (position, properties, etc.)                  │
+│  3. Compute word count from replication config                       │
+│  4. Serialize spawn-time properties to header byte buffer            │
+│  5. Call CreateObject(totalWords, typeRef, header, ..., ownerMode)   │
+│  6. SetSendUpdates(false) on the new object                         │
+│  7. memcpy serialized data to Words buffer                           │
+│  8. Store obj->Engine = instance                                     │
+│  9. Register in bidirectional registry                               │
+│ 10. Add instance to the scene tree                                   │
+│ 11. SetSendUpdates(true), SetHasValidData(true)                     │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ```cpp
-void* SpawnLocal(const std::string& scenePath, /* initial data */) {
+void* SpawnLocal(SharedMode::Client* client,
+                 ObjectRegistry& registry,
+                 SpawnableTypeRegistry& typeRegistry,
+                 const std::string& scenePath,
+                 SharedMode::ObjectOwnerModes ownerMode)
+{
     // 1-2. Instantiate and configure
-    auto* instance = InstantiateScene(scenePath);
-    ApplyInitialData(instance, /* ... */);
+    void* instance = InstantiateScene(scenePath);
+    ApplyInitialData(instance);
 
     // 3. Compute word count
     int userWords = ComputeWordCount(instance);
+    size_t totalWords = userWords + SharedMode::Object::ExtraTailWords;
 
     // 4. Serialize spawn data
-    std::vector<int32_t> spawnData = SerializeSpawnData(instance);
+    std::vector<uint8_t> spawnData = SerializeSpawnData(instance);
 
     // 5. Create Fusion object
-    constexpr size_t tailWords = sizeof(SharedMode::ObjectTail) / sizeof(int32_t);
-    size_t totalWords = userWords + tailWords;
-
-    SharedMode::TypeRef typeRef{HashPath(scenePath), static_cast<uint32_t>(totalWords)};
-    SharedMode::ObjectFlags flags(
-        SharedMode::ObjectSettingsFlags::None,
-        SharedMode::ObjectOwnerModes::Transaction,
-        SharedMode::ObjectInterestModes::All);
+    uint64_t typeHash = SharedMode::CRC64(scenePath.c_str(), scenePath.length());
+    SharedMode::TypeRef typeRef{typeHash, static_cast<uint32_t>(totalWords)};
 
     SharedMode::ObjectRoot* obj = client->CreateObject(
         totalWords, typeRef,
-        reinterpret_cast<const SharedMode::CharType*>(spawnData.data()),
-        spawnData.size() * sizeof(int32_t),
-        0, flags);
+        reinterpret_cast<const PhotonCommon::CharType*>(spawnData.data()),
+        spawnData.size(),
+        0,          // scene index
+        ownerMode
+    );
+
+    if (!obj) return nullptr;
 
     // 6. Disable sending until ready
     obj->SetSendUpdates(false);
 
     // 7. Copy spawn data to Words buffer
-    int usable = static_cast<int>(obj->Words.Length) - tailWords;
-    int toCopy = std::min(static_cast<int>(spawnData.size()), usable);
-    memcpy(obj->Words.Ptr, spawnData.data(), toCopy * sizeof(int32_t));
+    int usable = static_cast<int>(obj->Words.Length)
+               - SharedMode::Object::ExtraTailWords;
+    int toCopy = (userWords < usable) ? userWords : usable;
+    // (SerializePropertiesToWords fills the Words buffer)
+    SerializePropertiesToWords(instance, obj->Words.Ptr, toCopy);
 
-    // 8-9. Bind and register
-    BindSynchronizer(instance, obj);
-    registry.Register(GetEngineId(instance), obj->Id.Origin, obj->Id.Counter);
+    // 8. Store engine pointer
     obj->Engine = instance;
+
+    // 9. Register
+    uint64_t engineId = GetEngineObjectId(instance);
+    registry.Register(engineId, obj->Id);
 
     // 10. Add to scene tree
     AddToSceneTree(instance);
@@ -329,60 +331,119 @@ void* SpawnLocal(const std::string& scenePath, /* initial data */) {
 ### Remote Spawn Flow
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│ 1. OnObjectCreated callback fires with ObjectRoot*               │
-│ 2. Match Type.Hash to registered spawnable scene                 │
-│ 3. Load and instantiate the scene                                │
-│ 4. Deserialize spawn data from obj->Header                       │
-│ 5. Bind synchronizer to Fusion object                            │
-│ 6. Copy Words buffer to engine properties (deserialize_spawn_data)│
-│ 7. Register in object registry                                   │
-│ 8. Add instance to scene tree                                    │
-│ 9. SetHasValidData(true)                                         │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  1. OnObjectReady callback fires with ObjectRoot*                    │
+│  2. Match Type.Hash to a registered spawnable scene                  │
+│  3. Load and instantiate the scene                                   │
+│  4. Deserialize spawn data from obj->Header                          │
+│  5. Deserialize initial Words to engine properties                   │
+│  6. Store obj->Engine = instance                                     │
+│  7. Register in bidirectional registry                               │
+│  8. Add instance to scene tree                                       │
+│  9. SetHasValidData(true)                                            │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+```cpp
+void HandleRemoteSpawn(SharedMode::Client* client,
+                       SharedMode::ObjectRoot* obj,
+                       ObjectRegistry& registry,
+                       SpawnableTypeRegistry& typeRegistry)
+{
+    // 2. Find matching type
+    SpawnableType* type = typeRegistry.FindByTypeHash(obj->Type.Hash);
+    if (!type) {
+        printf("Unknown type hash: %llu\n",
+               static_cast<unsigned long long>(obj->Type.Hash));
+        return;
+    }
+
+    // 3. Instantiate
+    void* instance = InstantiateScene(type->scenePath);
+
+    // 4. Deserialize header (spawn data)
+    if (obj->Header.Valid()) {
+        DeserializeSpawnData(instance, obj->Header.Ptr, obj->Header.Length);
+    }
+
+    // 5. Apply initial Words to engine
+    if (obj->Words.IsValid()) {
+        int usable = static_cast<int>(obj->Words.Length)
+                   - SharedMode::Object::ExtraTailWords;
+        DeserializeWordsToProperties(instance, obj->Words.Ptr, usable);
+    }
+
+    // 6-7. Bind and register
+    obj->Engine = instance;
+    uint64_t engineId = GetEngineObjectId(instance);
+    registry.Register(engineId, obj->Id);
+
+    // 8. Add to scene
+    AddToSceneTree(instance);
+
+    // 9. Mark ready
+    obj->SetHasValidData(true);
+}
 ```
 
 ### Despawn
 
 ```cpp
-void Despawn(void* engineInstance) {
-    uint64_t engineId = GetEngineId(engineInstance);
+void Despawn(SharedMode::Client* client,
+             ObjectRegistry& registry,
+             void* engineInstance)
+{
+    uint64_t engineId = GetEngineObjectId(engineInstance);
+    SharedMode::ObjectId fusionId = registry.GetFusionId(engineId);
 
-    uint32_t origin, counter;
-    registry.GetFusionId(engineId, origin, counter);
+    if (fusionId.IsNone()) return;
 
-    SharedMode::ObjectId fusionId(origin, counter);
     SharedMode::ObjectRoot* obj = client->FindObjectRoot(fusionId);
-
     if (obj) {
-        // Destroy the Fusion object
-        // Second param: false = engine object NOT already destroyed
+        // Second param: false = engine object NOT already destroyed.
+        // The OnObjectDestroyed callback will handle engine cleanup.
         client->DestroyObjectLocal(obj, false);
     }
-
-    // The OnObjectDestroyed callback handles cleanup
 }
 ```
 
-`DestroyObjectLocal` signature:
+**`DestroyObjectLocal` signature:**
 
 ```cpp
 bool DestroyObjectLocal(ObjectRoot* obj, bool engineObjectAlreadyDestroyed);
 ```
 
-The `engineObjectAlreadyDestroyed` parameter tells the SDK whether the engine-side object is already gone (e.g., the user called `queue_free()` before `despawn()`). If `true`, the `OnObjectDestroyed` callback should skip freeing the engine object.
+The `engineObjectAlreadyDestroyed` parameter tells the SDK whether the engine-side object is already gone (e.g., the user destroyed it before calling despawn). If `true`, your `OnObjectDestroyed` handler should skip freeing the engine object.
 
-### DestroyModes
+### DestroyModes Enum
 
 The `OnObjectDestroyed` callback includes a `DestroyModes` enum indicating why the object was destroyed:
 
 ```cpp
 enum class DestroyModes {
-    Local = 0,        // DestroyObjectLocal() was called
-    Remote = 1,       // Remote authority destroyed it
-    SceneChange = 2,  // Scene changed, object cleaned up
-    Shutdown = 3      // Client shutting down
+    Local = 0,            // DestroyObjectLocal() was called by this client
+    Remote = 1,           // Remote authority destroyed the object
+    SceneChange = 2,      // Scene changed, object cleaned up
+    Shutdown = 3,         // Client shutting down
+    RejectedNotOwner = 4, // Creation rejected: not the owner
+    ForceDestroy = 5      // Server force-destroyed the object
 };
+```
+
+Use this to decide whether to free the engine object:
+
+```cpp
+subs += client->OnObjectDestroyed.Subscribe(
+    [&](const SharedMode::ObjectRoot* obj, SharedMode::DestroyModes mode) {
+        // Unregister from our registry
+        registry.UnregisterByFusionId(obj->Id);
+
+        // Free the engine object (unless already destroyed)
+        if (obj->Engine && mode != SharedMode::DestroyModes::Shutdown) {
+            DestroyEngineObject(obj->Engine);
+        }
+    }
+);
 ```
 
 ## Multiple Spawner Support
@@ -391,73 +452,115 @@ An integration can support multiple spawners, each managing different object typ
 
 1. Each spawner registers its own set of spawnable scenes
 2. On remote creation, broadcast to all spawners -- only the one with a matching type hash handles it
-3. Spawners self-register with the client (via `register_spawner()` / `unregister_spawner()`)
+3. Spawners self-register with the client
 
 ```cpp
 class SpawnerManager {
-    std::set<Spawner*> spawners;
+    std::unordered_set<Spawner*> spawners;
 
 public:
-    void Register(Spawner* s) { spawners.insert(s); }
-    void Unregister(Spawner* s) { spawners.erase(s); }
+    void RegisterSpawner(Spawner* s) { spawners.insert(s); }
+    void UnregisterSpawner(Spawner* s) { spawners.erase(s); }
 
-    void OnRemoteObjectCreated(SharedMode::ObjectRoot* obj) {
+    bool HandleRemoteObjectReady(SharedMode::Client* client,
+                                 SharedMode::ObjectRoot* obj)
+    {
         for (auto* spawner : spawners) {
-            spawner->TryHandleRemoteCreation(obj);
+            if (spawner->CanHandleType(obj->Type.Hash)) {
+                spawner->SpawnRemote(client, obj);
+                return true;
+            }
         }
+        return false; // No spawner claimed this object
     }
 
-    void OnRemoteObjectDestroyed(const SharedMode::ObjectRoot* obj, int mode) {
+    void HandleRemoteObjectDestroyed(const SharedMode::ObjectRoot* obj,
+                                     SharedMode::DestroyModes mode)
+    {
         for (auto* spawner : spawners) {
             spawner->TryHandleRemoteDestruction(obj, mode);
         }
     }
 };
+
+static SpawnerManager g_spawnerManager;
 ```
 
-**Godot integration**: `FusionClient` maintains a `std::unordered_set<FusionSpawner*>` and iterates all spawners in `_on_object_created()`. Each `FusionSpawner` checks if `obj->Type.Hash` matches any of its registered scenes.
+Wire it to the callbacks:
 
-## Synchronizer Registration
+```cpp
+subs += client->OnObjectReady.Subscribe(
+    [](SharedMode::ObjectRoot* obj) {
+        if (!g_spawnerManager.HandleRemoteObjectReady(g_client, obj)) {
+            printf("No spawner for type hash %llu\n",
+                   static_cast<unsigned long long>(obj->Type.Hash));
+        }
+    }
+);
 
-Synchronizers (the components that handle per-frame Words buffer sync) also register with the client:
+subs += client->OnObjectDestroyed.Subscribe(
+    [](const SharedMode::ObjectRoot* obj, SharedMode::DestroyModes mode) {
+        g_spawnerManager.HandleRemoteObjectDestroyed(obj, mode);
+    }
+);
+```
+
+## Synchronizer Registration Pattern
+
+Synchronizers (components that handle per-frame Words buffer sync) also register with the client:
 
 ```cpp
 class SyncManager {
-    std::set<Synchronizer*> synchronizers;
+    std::unordered_set<Synchronizer*> synchronizers;
 
 public:
     void Register(Synchronizer* s) { synchronizers.insert(s); }
     void Unregister(Synchronizer* s) { synchronizers.erase(s); }
 
-    void SyncOutboundAll() {
+    void SyncOutboundAll(SharedMode::Client* client) {
         for (auto* sync : synchronizers) {
-            if (sync->HasAuthority()) {
+            if (sync->HasAuthority(client)) {
                 sync->SyncOutbound();
             }
         }
     }
 
-    void SyncInboundAll() {
+    void SyncInboundAll(SharedMode::Client* client) {
         for (auto* sync : synchronizers) {
-            sync->SyncInbound();
+            if (!sync->HasAuthority(client)) {
+                sync->SyncInbound();
+            }
         }
     }
 };
 ```
 
-The frame loop (from [Getting Started](getting-started.md)) calls `SyncOutboundAll()` before `UpdateFrameEnd()` and `SyncInboundAll()` after `UpdateFrameBegin()`.
+The frame loop calls these at the appropriate points:
+
+```cpp
+void FrameUpdate(double dt) {
+    g_realtime->Service();
+
+    if (!g_client->IsRunning()) return;
+
+    g_syncManager.SyncOutboundAll(g_client);    // Before End
+    g_client->UpdateFrameEnd();
+    g_client->UpdateFrameBegin(dt);
+    g_syncManager.SyncInboundAll(g_client);     // After Begin
+}
+```
 
 ## Integration Entry Point
 
 The plugin's entry point registers all classes and creates the singleton client:
 
 ```cpp
-// Pseudocode for a GDExtension-style plugin
+// Pseudocode for a plugin entry point
 void InitializePlugin() {
-    // 1. Register settings
+    // 1. Register project settings (app ID, log level, etc.)
     RegisterProjectSettings();
 
-    // 2. Register classes
+    // 2. Register custom classes with the engine
     RegisterClass<ReplicationConfig>();
     RegisterClass<Spawner>();
     RegisterClass<Synchronizer>();
@@ -474,42 +577,47 @@ void UninitializePlugin() {
 }
 ```
 
-**Godot integration**: `register_types.cpp` handles this via `GDREGISTER_CLASS` macros and `Engine::get_singleton()->register_singleton()`.
-
-## Summary: Complete Integration Architecture
+## Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Your Engine                              │
-│                                                                 │
-│  ┌──────────┐  ┌──────────────┐  ┌────────────────────┐        │
-│  │ Spawner  │  │ Synchronizer │  │ Object Registry     │        │
-│  │ (factory)│  │ (sync loop)  │  │ (bidirectional map) │        │
-│  └────┬─────┘  └──────┬───────┘  └─────────┬──────────┘        │
-│       │               │                     │                   │
-│       │   ┌───────────┴───────────┐         │                   │
-│       │   │   FusionClient        │         │                   │
-│       └───┤   (singleton)         ├─────────┘                   │
-│           │   - spawners set      │                             │
-│           │   - synchronizers set │                             │
-│           │   - object_registry   │                             │
-│           │   - frame loop        │                             │
-│           │   - callbacks         │                             │
-│           └───────────┬───────────┘                             │
-│                       │                                         │
-├───────────────────────┼─────────────────────────────────────────┤
-│                       │ (opaque handle boundary)                │
-│                       v                                         │
-│  ┌──────────────────────────────────────────┐                   │
-│  │         SharedMode::Client               │                   │
-│  │  - Objects map                           │                   │
-│  │  - Photon transport                      │                   │
-│  │  - UpdateFrameBegin / UpdateFrameEnd     │                   │
-│  │  - CreateObject / CreateSubObject        │                   │
-│  │  - RPC system                            │                   │
-│  └──────────────────────────────────────────┘                   │
-│                   Fusion SDK                                    │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Your Engine                                   │
+│                                                                      │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐      │
+│  │ Spawner(s)   │  │ Synchronizer │  │ Object Registry        │      │
+│  │ (factory)    │  │ (sync loop)  │  │ (bidirectional map)    │      │
+│  └──────┬───────┘  └──────┬───────┘  └──────────┬────────────┘      │
+│         │                 │                      │                   │
+│         │   ┌─────────────┴──────────────┐       │                   │
+│         │   │   FusionClient             │       │                   │
+│         └───┤   (singleton)              ├───────┘                   │
+│             │   - spawner manager        │                           │
+│             │   - sync manager           │                           │
+│             │   - object registry        │                           │
+│             │   - frame loop             │                           │
+│             │   - subscription bag       │                           │
+│             └────────────┬───────────────┘                           │
+│                          │                                           │
+├──────────────────────────┼───────────────────────────────────────────┤
+│                          │ (void* Engine boundary)                   │
+│                          v                                           │
+│  ┌───────────────────────────────────────────────┐                   │
+│  │         SharedMode::Client                    │                   │
+│  │  - AllObjects() / AllRootObjects()            │                   │
+│  │  - CreateObject / CreateSubObject             │                   │
+│  │  - UpdateFrameBegin / UpdateFrameEnd          │                   │
+│  │  - RPC system (CreateUserRpc / SendUserRpc)   │                   │
+│  │  - Broadcasters (OnObjectReady, etc.)         │                   │
+│  └────────────────────┬──────────────────────────┘                   │
+│                       │                                              │
+│  ┌────────────────────┴──────────────────────────┐                   │
+│  │   PhotonMatchmaking::RealtimeClient           │                   │
+│  │  - Connect / SelectRegion / JoinOrCreateRoom  │                   │
+│  │  - Service()                                  │                   │
+│  │  - Task<Result<T>> async operations           │                   │
+│  └───────────────────────────────────────────────┘                   │
+│                   Fusion SDK                                         │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Next Steps
@@ -517,6 +625,4 @@ void UninitializePlugin() {
 - [Getting Started](getting-started.md) -- Minimal integration skeleton
 - [Object Sync Patterns](object-sync-patterns.md) -- Words buffer mechanics
 - [Sub-Objects](sub-objects.md) -- Child object creation and lifecycle
-- [Objects](../concepts/objects.md) -- Conceptual object hierarchy
-- [Object Creation](../concepts/object-creation.md) -- Three creation paths
-- [Client API Reference](../reference/client-api.md) -- Full Client API
+- [Pitfalls](../pitfalls.md) -- Critical gotchas

@@ -19,24 +19,7 @@ Every [Object](objects.md) has a `Words` buffer -- a flat `int32_t` array where 
 - Properties are packed sequentially with **no type markers** and **no alignment padding**.
 - Each property occupies a fixed number of words determined by its type.
 - The iteration order of properties must be identical on all clients.
-- The last 6 words are reserved for `ObjectTail` and must not be written by user code.
-
-### ObjectTail
-
-```cpp
-struct ObjectTail {
-    int32_t AOI_X;       // Area of Interest X coordinate
-    int32_t AOI_Y;       // Area of Interest Y coordinate
-    int32_t AOI_Z;       // Area of Interest Z coordinate
-    int32_t AOI_SET;     // Whether AOI location has been set
-    int32_t Destroyed;   // Destruction flag
-    int32_t Dummy;       // Padding
-};
-
-static_assert(sizeof(ObjectTail) == 24);  // 6 words
-```
-
-The SDK reads `ObjectTail` from the end of the buffer. Writing into the tail area corrupts internal state and causes undefined behavior. The constant `Object::ExtraTailWords` (6) must be added to the user word count when allocating objects.
+- The last 6 words are reserved for [ObjectTail](objects.md#objecttail) and must not be written by user code.
 
 ### Type-to-Word Mapping
 
@@ -64,7 +47,7 @@ Each data type maps to a fixed number of 32-bit words. Floating-point values are
 
 ### Float-to-Word Conversion
 
-Floats are stored as their raw bit pattern, not cast:
+Floats are stored as their raw bit pattern via `memcpy`, not via cast (which is undefined behavior):
 
 ```cpp
 int32_t float_to_word(float value) {
@@ -82,7 +65,7 @@ float word_to_float(int32_t word) {
 
 ### Int64 Split
 
-64-bit integers are split into two 32-bit words:
+64-bit integers are split into two 32-bit words (low word first):
 
 ```cpp
 void int64_to_words(int64_t value, int32_t& low, int32_t& high) {
@@ -95,6 +78,37 @@ int64_t words_to_int64(int32_t low, int32_t high) {
          | static_cast<uint32_t>(low);
 }
 ```
+
+Doubles use the same pattern: `memcpy` to `int64_t`, then split into two words.
+
+### Quaternion Compression
+
+For bandwidth-sensitive applications, quaternions can be compressed from 4 words (16 bytes) to 1 word (4 bytes) using smallest-three encoding:
+
+```cpp
+// Compress: 4 floats -> 1 uint32
+uint32_t compressed = SharedMode::QuaternionCompress(x, y, z, w);
+
+// Decompress: 1 uint32 -> 4 floats
+float x, y, z, w;
+SharedMode::QuaternionDecompress(compressed, x, y, z, w);
+```
+
+The algorithm stores the three smallest components with 10 bits each, plus a 2-bit index identifying the largest component (which is reconstructed from the unit constraint). This matches the server-side implementation in `Maths.cs` exactly.
+
+### Float Quantization
+
+For position values where full `float` precision is unnecessary:
+
+```cpp
+// Quantize: float -> int32 with N decimal places
+int32_t quantized = SharedMode::FloatQuantize(3.14159f, 3);  // -> 3142
+
+// Dequantize: int32 -> float
+float restored = SharedMode::FloatDequantize<float>(3142, 3);  // -> 3.142
+```
+
+Both `float` and `double` inputs are supported. The `decimals` parameter controls precision (e.g., 2 = hundredths, 3 = thousandths).
 
 ### Array Serialization
 
@@ -109,24 +123,20 @@ Packed arrays use a count-prefixed layout:
 - Capacity is fixed at object creation time. Elements beyond capacity are truncated.
 - Unused element slots are zero-filled.
 
-| Array Type | Element Words |
-|-----------|--------------|
-| PackedFloat32Array | 1 |
-| PackedFloat64Array | 2 |
-| PackedInt32Array | 1 |
-| PackedInt64Array | 2 |
-| PackedVector2Array | 2 |
-| PackedVector3Array | 3 |
-| PackedVector4Array | 4 |
-| PackedColorArray | 4 |
-
 ### String Serialization
 
-Strings are not stored inline in the Words buffer. Instead, a `StringHandle` (2 words: id + generation) references an entry in the root object's [NetworkedStringHeap](string-heap.md). See the StringHeap documentation for the full allocation/resolve/free lifecycle.
+Strings are not stored inline in the Words buffer. Instead, a `StringHandle` (2 words: id + generation) references an entry in the root object's [NetworkedStringHeap](string-heap.md):
+
+```
+words[offset]     = handle.id
+words[offset + 1] = handle.generation
+```
+
+See the [String Heap](string-heap.md) documentation for the full allocation/resolve/free lifecycle.
 
 ### Change Detection
 
-The SDK maintains a `Shadow` buffer (copy of the previous state). Each frame, it compares `Words` against `Shadow` word-by-word. Only words that differ are included in the outgoing state packet. After sending, `Shadow` is updated to match `Words`.
+The SDK maintains a `Shadow` buffer (copy of the previous acked state). Each frame, it compares `Words` against `Shadow` word-by-word. Only words that differ are included in the outgoing state packet. After acknowledgment, `Shadow` is updated to match `Words`.
 
 ## ReadBuffer / WriteBuffer (Packet Serialization)
 
@@ -136,6 +146,7 @@ The SDK maintains a `Shadow` buffer (copy of the previous state). Each frame, it
 
 ```cpp
 class WriteBuffer {
+    // Fixed-size writes
     void Byte(uint8_t value);
     void Sbyte(int8_t value);
     void UShort(uint16_t value);
@@ -145,15 +156,15 @@ class WriteBuffer {
     void ULong(uint64_t value);
     void Long(int64_t value);
     void Float(float value);
-    void Double(float value);
+    void Double(double value);
 
-    // Varint encoding
+    // Varint encoding (compact for small values)
     void ULongVar(uint64_t value);
-    void LongVar(int64_t value);
+    void LongVar(int64_t value);    // ZigZag + varint
     void UIntVar(uint32_t value);
-    void IntVar(int32_t value);
+    void IntVar(int32_t value);     // ZigZag + varint
     void UShortVar(uint16_t value);
-    void ShortVar(int16_t value);
+    void ShortVar(int16_t value);   // ZigZag + varint
 
     // Compound types
     void ObjectId(ObjectId id);     // Player + Counter as varints
@@ -169,8 +180,9 @@ class WriteBuffer {
 
     // Control
     ResetPoint GetResetPoint();     // Bookmark for rollback
-    Data Take();                    // Extract written data
+    Data Take();                    // Extract written data (moves ownership)
     bool Empty() const;
+    size_t Offset() const;
     void Clear() const;
 };
 ```
@@ -179,6 +191,9 @@ class WriteBuffer {
 
 ```cpp
 class ReadBuffer {
+    explicit ReadBuffer(Data data);
+
+    // Fixed-size reads
     uint8_t  Byte();
     int8_t   Sbyte();
     uint16_t UShort();
@@ -192,11 +207,11 @@ class ReadBuffer {
 
     // Varint decoding
     uint64_t ULongVar();
-    int64_t  LongVar();
+    int64_t  LongVar();     // ZigZag + varint
     uint32_t UIntVar();
-    int32_t  IntVar();
+    int32_t  IntVar();      // ZigZag + varint
     uint16_t UShortVar();
-    int16_t  ShortVar();
+    int16_t  ShortVar();    // ZigZag + varint
 
     // Compound types
     ObjectId ObjectId();
@@ -210,17 +225,24 @@ class ReadBuffer {
     void Data(Data& data);
     Data DataAll();
     void Skip(size_t length);
+    size_t Offset() const;
 };
 ```
 
 ### Varint Encoding
 
-Variable-length integer encoding uses a standard LEB128-style format. Each byte stores 7 bits of data plus a continuation bit. This is used for `ObjectId`, `PlayerId`, and other values that are typically small but can be large.
+Variable-length integer encoding uses LEB128-style format. Each byte stores 7 data bits plus a continuation bit in the MSB. This is efficient for values that are typically small (ObjectIds, PlayerIds, counts):
 
-Signed integers use ZigZag encoding before varint encoding:
+```
+Value 300 = 0b100101100:
+  Byte 1: 1_0101100  (continuation=1, data=0101100)
+  Byte 2: 0_0000010  (continuation=0, data=0000010)
+```
+
+Signed integers use ZigZag encoding before varint encoding to keep small negative values compact:
 
 ```cpp
-int64_t ZigZagEncode(int64_t i);   // Maps signed to unsigned (0, -1, 1, -2, 2 -> 0, 1, 2, 3, 4)
+int64_t ZigZagEncode(int64_t i);   // 0, -1, 1, -2, 2 -> 0, 1, 2, 3, 4
 int64_t ZigZagDecode(int64_t i);   // Reverse mapping
 ```
 
@@ -230,7 +252,8 @@ int64_t ZigZagDecode(int64_t i);   // Reverse mapping
 
 ```cpp
 ResetPoint rp = writer.GetResetPoint();
-// Write data...
+writer.Int(someValue);
+// ...
 if (shouldDiscard) {
     rp.Use();  // Rolls back to the saved position
 }
@@ -238,29 +261,30 @@ if (shouldDiscard) {
 
 ### WriteFlags
 
-`WriteFlags` provides a deferred flags byte. The flags byte is allocated immediately, but bits can be added later:
+`WriteFlags` provides a deferred flags byte. The byte is allocated immediately at the current position, but bits can be set later after subsequent writes determine the flags:
 
 ```cpp
 WriteFlags flags = writer.Flags();  // Allocates 1 byte, initialized to 0
-// Write object data...
+writer.Int(objectData);             // Write object data...
 flags.AddFlags(OBJECT_SENDFLAG_CREATE);  // Set bits after the fact
 ```
 
-This pattern is used for object state packets where the flags depend on what was written.
-
 ### Send Flags
 
-Object state packets use these flags:
+Object state packets use these flags to indicate what data follows:
 
 ```cpp
 constexpr uint8_t OBJECT_SENDFLAG_CREATE                    = 1;
 constexpr uint8_t OBJECT_SENDFLAG_STRINGHEAP_ENTRIES_CHANGE = 2;
 constexpr uint8_t OBJECT_SENDFLAG_STRINGHEAP_DATA_CHANGE    = 4;
+constexpr uint8_t OBJECT_SENDFLAG_IN_INTEREST_SET           = 8;
+constexpr uint8_t OBJECT_SENDFLAG_IS_SUBOBJECT              = 16;
+constexpr uint8_t OBJECT_SENDFLAG_TIMEONLY                  = 32;
 ```
 
-## See Also
+## Related
 
 - [Objects](objects.md) -- Object hierarchy and buffer structure
 - [String Heap](string-heap.md) -- StringHandle serialization for strings
-- [Architecture](architecture.md) -- Overall SDK structure
-- [Buffers API Reference](../reference/buffers-api.md) -- Complete ReadBuffer/WriteBuffer reference
+- [Architecture](architecture.md) -- Fundamental types (Word, Data, BufferT)
+- [RPCs](rpcs.md) -- ReadBuffer/WriteBuffer usage for RPC payloads

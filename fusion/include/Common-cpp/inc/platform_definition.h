@@ -1,3 +1,3 @@
 #pragma once
 
-#define _EG_PS5_PLATFORM 1
+#define _EG_EMSCRIPTEN_PLATFORM 1

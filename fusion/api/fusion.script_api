@@ -5,7 +5,8 @@
   members:
   - name: init
     type: function
-    desc: Initialize Fusion. 
+    desc: |
+      Initialize Fusion.
     parameters:
     - name: app_id
       type: string
@@ -14,7 +15,8 @@
 
   - name: connect
     type: function
-    desc: Connect Fusion. 
+    desc: |
+      Connect Fusion.
     parameters:
     - name: region
       type: string
@@ -23,51 +25,92 @@
     - name: server
       type: string
 
+  - name: disconnect
+    type: function
+    desc: |
+      Disonnect Fusion.
+
+  - name: reconnect
+    type: function
+    desc: |
+      Reconnect Fusion.
+
+  - name: start
+    type: function
+    desc: |
+      Start Fusion sync.
+
+  - name: stop
+    type: function
+    desc: |
+      Stop Fusion sync.
+
+  - name: get_state
+    type: function
+    desc: |
+      Get connection state.
+    returns:
+    - name: Connection
+      type: number
+      desc: |
+        State
+        
+
+  - name: get_disconnect_cause
+    type: function
+    desc: |
+      Get disconnect cause.
+    returns:
+    - name: Disconnect
+      type: number
+      desc: |
+        Cause
+        
+
   - name: join_or_create_room_random
     type: function
-    desc: Join or create random room. 
+    desc: |
+      Join or create random room.
     parameters:
     - name: room_name
       type: string
 
   - name: is_connected
     type: function
-    desc: Check if Fusion connected. 
+    desc: |
+      Check if Fusion connected.
     returns:
     - name: connected
       type: boolean
 
   - name: is_running
     type: function
-    desc: Check if Fusion is running. 
+    desc: |
+      Check if Fusion is running.
     returns:
     - name: running
       type: boolean
 
   - name: is_in_room
     type: function
-    desc: Check if Fusion is in a room. 
+    desc: |
+      Check if Fusion is in a room.
     returns:
     - name: in_room
       type: boolean
 
-  - name: is_joining_or_in_room
-    type: function
-    desc: Check if Fusion is joining or in a room. 
-    returns:
-    - name: running
-      type: boolean
-
   - name: enable_debugging
     type: function
-    desc: Enable/disable debugging. 
+    desc: |
+      Enable/disable debugging.
     parameters:
     - name: enable
       type: boolean
 
   - name: register
     type: function
-    desc: Register a scene object. 
+    desc: |
+      Register a scene object.
     parameters:
     - name: id
       type: string
@@ -76,7 +119,8 @@
 
   - name: register
     type: function
-    desc: Register an object. 
+    desc: |
+      Register an object.
     parameters:
     - name: id
       type: string
@@ -85,14 +129,16 @@
 
   - name: destroy
     type: function
-    desc: Destroy a local object. 
+    desc: |
+      Destroy a local object.
     parameters:
     - name: id
       type: string
 
   - name: scene_change
     type: function
-    desc: Change scene. 
+    desc: |
+      Change scene.
     parameters:
     - name: index
       type: number
@@ -103,7 +149,8 @@
 
   - name: send_rpc
     type: function
-    desc: Send RPC. 
+    desc: |
+      Send RPC.
     parameters:
     - name: target_player
       type: number
@@ -118,14 +165,16 @@
 
   - name: on_event
     type: function
-    desc: Set event listener. 
+    desc: |
+      Set event listener.
     parameters:
     - name: listener
       type: function
 
   - name: get_local_player_id
     type: function
-    desc: Get the player id of the local client
+    desc: |
+      Get the player id of the local client
     returns:
     - name: The
       type: number
@@ -135,7 +184,8 @@
 
   - name: get_owner
     type: function
-    desc: Get the player id of the current owner of an object
+    desc: |
+      Get the player id of the current owner of an object
     parameters:
     - name: id
       type: string
@@ -151,7 +201,8 @@
 
   - name: is_owner
     type: function
-    desc: Check if the local client is the owner of an object
+    desc: |
+      Check if the local client is the owner of an object
     parameters:
     - name: id
       type: string
@@ -167,7 +218,8 @@
 
   - name: has_owner
     type: function
-    desc: Check if an object has an owner
+    desc: |
+      Check if an object has an owner
     parameters:
     - name: id
       type: string
@@ -183,7 +235,8 @@
 
   - name: set_want_owner
     type: function
-    desc: Signal desire for the local client to own an object
+    desc: |
+      Signal desire for the local client to own an object
     parameters:
     - name: id
       type: string
@@ -193,7 +246,8 @@
 
   - name: set_dont_want_owner
     type: function
-    desc: Signal desire for the local client to no longer own an object
+    desc: |
+      Signal desire for the local client to no longer own an object
     parameters:
     - name: id
       type: string
@@ -203,7 +257,8 @@
 
   - name: clear_owner_cooldown
     type: function
-    desc: Explicitly clear the ownership cooldown
+    desc: |
+      Explicitly clear the ownership cooldown
     parameters:
     - name: id
       type: string
@@ -213,7 +268,8 @@
 
   - name: player_count
     type: function
-    desc: Get player count
+    desc: |
+      Get player count
     returns:
     - name: count
       type: number
@@ -223,7 +279,8 @@
 
   - name: is_master_client
     type: function
-    desc: Get if this client is the room's master
+    desc: |
+      Get if this client is the room's master
     returns:
     - name: master
       type: boolean
@@ -233,7 +290,8 @@
 
   - name: get_rtt
     type: function
-    desc: Get round trip time
+    desc: |
+      Get round trip time
     returns:
     - name: rtt
       type: number
@@ -243,7 +301,8 @@
 
   - name: network_time_diff
     type: function
-    desc: Get raw offset between server time and local time. A positive value means the server clock is ahead of the local clock.
+    desc: |
+      Get raw offset between server time and local time. A positive value means the server clock is ahead of the local clock.
     returns:
     - name: diff
       type: number
@@ -253,7 +312,8 @@
 
   - name: area_of_interest_used
     type: function
-    desc: Check if the room has AOI enabled..
+    desc: |
+      Check if the room has AOI enabled..
     returns:
     - name: aoi_used
       type: boolean
@@ -263,7 +323,8 @@
 
   - name: area_of_interest_cell_size
     type: function
-    desc: Get the AOI cell size. Configured on a room level.
+    desc: |
+      Get the AOI cell size. Configured on a room level.
     returns:
     - name: size
       type: number
@@ -273,37 +334,136 @@
 
   - name: OWNERMODE_TRANSACTION
     type: number
-    desc: OWNERMODE_TRANSACTION
+    desc: |
+      OWNERMODE_TRANSACTION
 
   - name: OWNERMODE_DYNAMIC
     type: number
-    desc: OWNERMODE_DYNAMIC
+    desc: |
+      OWNERMODE_DYNAMIC
 
   - name: OWNERMODE_MASTERCLIENT
     type: number
-    desc: OWNERMODE_MASTERCLIENT
+    desc: |
+      OWNERMODE_MASTERCLIENT
 
-  - name: OBJECTSETTINGS_NONE
+  - name: STATE_DISCONNECTED
     type: number
-    desc: OBJECTSETTINGS_NONE
+    desc: |
+      STATE_DISCONNECTED
 
-  - name: OBJECTSETTINGS_OWNERLEAVESOWNERTONONE
+  - name: STATE_CONNECTING
     type: number
-    desc: OBJECTSETTINGS_OWNERLEAVESOWNERTONONE
+    desc: |
+      STATE_CONNECTING
 
-  - name: OBJECTSETTINGS_ISGLOBALINSTANCE
+  - name: STATE_CONNECTED
     type: number
-    desc: OBJECTSETTINGS_ISGLOBALINSTANCE
+    desc: |
+      STATE_CONNECTED
 
-  - name: INTERESTMODE_ALL
+  - name: STATE_JOININGROOM
     type: number
-    desc: INTERESTMODE_ALL
+    desc: |
+      STATE_JOININGROOM
 
-  - name: INTERESTMODE_AREA
+  - name: STATE_INROOM
     type: number
-    desc: INTERESTMODE_AREA
+    desc: |
+      STATE_INROOM
 
-  - name: INTERESTMODE_ASSIGNED
+  - name: STATE_LEAVINGROOM
     type: number
-    desc: INTERESTMODE_ASSIGNED
+    desc: |
+      STATE_LEAVINGROOM
+
+  - name: STATE_DISCONNECTING
+    type: number
+    desc: |
+      STATE_DISCONNECTING
+
+  - name: DISCONNECT_CAUSE_NONE
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_NONE
+
+  - name: DISCONNECT_CAUSE_DISCONNECTBYSERVERUSERLIMIT
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_DISCONNECTBYSERVERUSERLIMIT
+
+  - name: DISCONNECT_CAUSE_EXCEPTIONONCONNECT
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_EXCEPTIONONCONNECT
+
+  - name: DISCONNECT_CAUSE_DISCONNECTBYSERVER
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_DISCONNECTBYSERVER
+
+  - name: DISCONNECT_CAUSE_DISCONNECTBYSERVERLOGIC
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_DISCONNECTBYSERVERLOGIC
+
+  - name: DISCONNECT_CAUSE_TIMEOUTDISCONNECT
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_TIMEOUTDISCONNECT
+
+  - name: DISCONNECT_CAUSE_EXCEPTION
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_EXCEPTION
+
+  - name: DISCONNECT_CAUSE_INVALIDAUTHENTICATION
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_INVALIDAUTHENTICATION
+
+  - name: DISCONNECT_CAUSE_MAXCCUREACHED
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_MAXCCUREACHED
+
+  - name: DISCONNECT_CAUSE_INVALIDREGION
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_INVALIDREGION
+
+  - name: DISCONNECT_CAUSE_OPERATIONNOTALLOWEDINCURRENTSTATE
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_OPERATIONNOTALLOWEDINCURRENTSTATE
+
+  - name: DISCONNECT_CAUSE_CUSTOMAUTHENTICATIONFAILED
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_CUSTOMAUTHENTICATIONFAILED
+
+  - name: DISCONNECT_CAUSE_CLIENTVERSIONTOOOLD
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_CLIENTVERSIONTOOOLD
+
+  - name: DISCONNECT_CAUSE_CLIENTVERSIONINVALID
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_CLIENTVERSIONINVALID
+
+  - name: DISCONNECT_CAUSE_DASHBOARDVERSIONINVALID
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_DASHBOARDVERSIONINVALID
+
+  - name: DISCONNECT_CAUSE_AUTHENTICATIONTICKETEXPIRED
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_AUTHENTICATIONTICKETEXPIRED
+
+  - name: DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT
+    type: number
+    desc: |
+      DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT
 

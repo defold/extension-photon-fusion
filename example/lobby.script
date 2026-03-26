@@ -57,6 +57,7 @@ end
 
 local function start_game()
 	log("start game")
+	fusion.start()
 	local pos = vmath.vector3(math.random(5), 0, math.random(5))
 	factory.create("#playerfactory", pos)
 end
@@ -74,7 +75,7 @@ function init(self)
 		local appid = "98c13f6b-d277-4a55-b9a9-24373e392d21"
 		local appversion = "1.0"
 		fusion.init(appid, appversion)
-		--fusion.enable_debug(true)
+		fusion.enable_debug(true)
 		connect()
 		if index > 1 then
 			wait(1)

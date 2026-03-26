@@ -2,7 +2,7 @@
 
 This guide covers the practical patterns for synchronizing object state through Fusion's Words buffer: computing word offsets, mapping types to words, writing and reading properties, spawn data serialization, array replication, and string property sync.
 
-See [Serialization](../concepts/serialization.md) for the conceptual foundation and [Getting Started](getting-started.md) for the minimal integration skeleton.
+See [Getting Started](getting-started.md) for the minimal integration skeleton.
 
 ## The Sync Loop
 
@@ -10,14 +10,14 @@ Every frame, the integration runs a two-phase sync cycle:
 
 ```
 Authority client                          Non-authority client
-     |                                            |
-     |  sync_outbound()                           |
-     |  ┌──────────────┐                          |
-     |  │ Read engine  │                          |
-     |  │ properties   │                          |
-     |  │ Write to     │                          |
-     |  │ Words buffer │                          |
-     |  └──────┬───────┘                          |
+     |                                           |
+     |  sync_outbound()                          |
+     |  ┌──────────────┐                         |
+     |  │ Read engine   │                         |
+     |  │ properties    │                         |
+     |  │ Write to      │                         |
+     |  │ Words buffer  │                         |
+     |  └──────┬───────┘                         |
      |         v                                  |
      |  UpdateFrameEnd()  ──── network ────>  UpdateFrameBegin()
      |                                            |
@@ -37,35 +37,35 @@ The authority client is the source of truth. It writes engine-side property valu
 The Words buffer is a flat `int32_t` array on each `Object`. Properties are serialized sequentially at fixed offsets with no type markers, padding, or delimiters.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  User data area                     │  Tail (6 words) │
-│  [prop0] [prop1] [prop2] ...        │  [AOI][Destroyed]│
-└─────────────────────────────────────────────────────┘
-  ^                                    ^
-  Words.Ptr[0]                         Words.Ptr[Words.Length - 6]
+┌─────────────────────────────────────────────────────────────────────────┐
+│  User data area                                │  Tail (6 words)        │
+│  [prop0] [prop1] [prop2] ...                   │  [RqObj][IntKey][D][SR]│
+└─────────────────────────────────────────────────────────────────────────┘
+  ^                                               ^
+  Words.Ptr[0]                                    Words.Ptr[userWords]
 ```
 
-**Tail area (6 words = `sizeof(ObjectTail)`):**
+**Tail area (6 words = `Object::ExtraTailWords` = `sizeof(ObjectTail) / 4`):**
 
 ```cpp
+#pragma pack(push, 4)
 struct ObjectTail {
-    int32_t AOI_X;       // Area of Interest X
-    int32_t AOI_Y;       // Area of Interest Y
-    int32_t AOI_Z;       // Area of Interest Z
-    int32_t AOI_SET;     // AOI has been set
-    int32_t Destroyed;   // Object destruction flag
-    int32_t Dummy;       // Padding
+    int32_t RequiredObjectsCount;  // Number of required sub-objects
+    uint64_t InterestKey;          // Interest/AOI key (8 bytes = 2 words)
+    int32_t Destroyed;             // Object destruction flag
+    int32_t SendRate;              // Per-object send rate override
+    int32_t Dummy;                 // Padding
 };
+#pragma pack(pop)
 static_assert(sizeof(ObjectTail) == 24); // 6 * sizeof(int32_t)
 ```
 
-**Never write to the tail area.** Overwriting the `Destroyed` field silently kills the object.
+**Never write user data into the tail area.** Overwriting the `Destroyed` field silently kills the object. Overwriting `InterestKey` corrupts AOI filtering. Overwriting `SendRate` changes the object's network update rate.
 
-The usable word count is:
+The usable word count for user data is:
 
 ```cpp
-constexpr int tailWords = sizeof(SharedMode::ObjectTail) / sizeof(int32_t); // 6
-int usableWords = static_cast<int>(obj->Words.Length) - tailWords;
+int usableWords = static_cast<int>(obj->Words.Length) - SharedMode::Object::ExtraTailWords;
 ```
 
 ## Type-to-Word Mapping
@@ -74,7 +74,7 @@ Each property type occupies a fixed number of words. The integration must agree 
 
 | Type | Words | Encoding |
 |------|-------|----------|
-| `bool` | 1 | `0` or `1` |
+| `bool` | 1 | `0` or `1` as `int32_t` |
 | `int32` | 1 | Direct `int32_t` |
 | `float` | 1 | `memcpy` bit-cast from `float` |
 | `int64` | 2 | Low word = bits [0:31], high word = bits [32:63] |
@@ -92,11 +92,12 @@ Each property type occupies a fixed number of words. The integration must agree 
 | `Basis` (9x float) | 9 | Row-major: `[r0c0, r0c1, r0c2, r1c0, ...]` |
 | `Transform2D` (6x float) | 6 | Column-major: `[col0.x, col0.y, col1.x, col1.y, col2.x, col2.y]` |
 | `Transform3D` (12x float) | 12 | `[Basis(9)] [origin.x, origin.y, origin.z]` |
-| `String` | 2 | StringHandle: `[id, generation]` (see [String Sync](#string-property-sync)) |
+| `CompressedQuat` (uint32) | 1 | Smallest-three encoding via `QuaternionCompress()` |
+| `String` | 2 | StringHandle: `[id, generation]` (see [String Property Sync](#string-property-sync)) |
 
 ### Float-to-Word Bit-Cast
 
-Floats are stored via `memcpy`, not casting, to avoid undefined behavior:
+Floats are stored via `memcpy`, not pointer casting, to avoid undefined behavior:
 
 ```cpp
 int32_t float_to_word(float value) {
@@ -113,9 +114,11 @@ float word_to_float(int32_t word) {
 }
 ```
 
+**Never use pointer casts** (`*reinterpret_cast<int32_t*>(&value)`) -- this violates strict aliasing rules and causes undefined behavior that can manifest as incorrect values under optimization.
+
 ### 64-bit Value Splitting
 
-`int64` and `double` values occupy 2 words:
+`int64` and `double` values occupy 2 words. Split into low and high 32-bit halves:
 
 ```cpp
 void int64_to_words(int64_t value, int32_t& low, int32_t& high) {
@@ -127,6 +130,19 @@ int64_t words_to_int64(int32_t low, int32_t high) {
     return (static_cast<int64_t>(static_cast<uint32_t>(high)) << 32) |
             static_cast<uint32_t>(low);
 }
+
+void double_to_words(double value, int32_t& low, int32_t& high) {
+    int64_t bits;
+    memcpy(&bits, &value, sizeof(double));
+    int64_to_words(bits, low, high);
+}
+
+double words_to_double(int32_t low, int32_t high) {
+    int64_t bits = words_to_int64(low, high);
+    double value;
+    memcpy(&value, &bits, sizeof(double));
+    return value;
+}
 ```
 
 ## Word Offset Computation
@@ -134,14 +150,13 @@ int64_t words_to_int64(int32_t low, int32_t high) {
 Properties are laid out sequentially. The offset of each property depends on the total word count of all preceding properties.
 
 ```cpp
-// Example: sync position (Vector3 = 3 words) + rotation (float = 1 word) + health (int32 = 1 word)
-//
-// Offset 0: position.x  (float, 1 word)
-// Offset 1: position.y  (float, 1 word)
-// Offset 2: position.z  (float, 1 word)
-// Offset 3: rotation    (float, 1 word)
-// Offset 4: health      (int32, 1 word)
-// Total: 5 user words
+// Example layout:
+//   Offset 0: position.x  (float, 1 word)
+//   Offset 1: position.y  (float, 1 word)
+//   Offset 2: position.z  (float, 1 word)
+//   Offset 3: rotation    (float, 1 word)
+//   Offset 4: health      (int32, 1 word)
+//   Total: 5 user words
 
 int word_offset = 0;
 
@@ -160,30 +175,27 @@ words[word_offset] = health;
 word_offset += 1;
 ```
 
-**Iteration order must be identical in:**
-1. `sync_outbound()` -- authority writes
-2. `sync_inbound()` -- non-authority reads
-3. `serialize_spawn_data()` -- initial state at creation
-4. `deserialize_spawn_data()` -- initial state on remote
+**Iteration order must be identical in all of these functions:**
+
+1. `sync_outbound()` -- authority writes engine state to Words
+2. `sync_inbound()` -- non-authority reads Words to engine state
+3. Spawn data serialization -- initial state at creation time
+4. Spawn data deserialization -- initial state on the remote side
 5. `compute_word_count()` -- buffer size calculation
 
-If the order differs, data will be read at the wrong offsets and silently corrupted.
+If the order differs between any of these, properties will be read at wrong offsets and silently corrupted. There are no runtime checks.
 
 ## Writing Properties (sync_outbound)
 
 The authority client writes to the Words buffer each frame:
 
 ```cpp
-void SyncOutbound(SharedMode::Object* obj) {
+void SyncOutbound(SharedMode::Client* client, SharedMode::Object* obj) {
     if (!obj || !obj->Words.IsValid()) return;
+    if (!client->IsOwner(obj)) return;
 
     int32_t* words = obj->Words.Ptr;
-    constexpr int tailWords = sizeof(SharedMode::ObjectTail) / sizeof(int32_t);
-    int maxWords = static_cast<int>(obj->Words.Length) - tailWords;
     int offset = 0;
-
-    // Write each property at its computed offset
-    // (Must match the order in SyncInbound and SpawnData)
 
     // Position (Vector3 = 3 words)
     words[offset + 0] = float_to_word(myPosition.x);
@@ -195,47 +207,41 @@ void SyncOutbound(SharedMode::Object* obj) {
     words[offset] = float_to_word(myRotation);
     offset += 1;
 
-    // Health (int = 1 word)
+    // Health (int32 = 1 word)
     words[offset] = myHealth;
     offset += 1;
 
-    // Enable sending (disable initially after CreateObject, enable on first outbound)
+    // Ensure the object sends updates
     obj->SetSendUpdates(true);
 }
 ```
-
-**Godot integration pattern**: The Godot integration iterates auto-sync paths (position, rotation) first, then custom properties from a `FusionReplicationConfig` resource. This two-pass approach keeps the serialization order deterministic.
 
 ## Reading Properties (sync_inbound)
 
 Non-authority clients read from the Words buffer and apply to engine state:
 
 ```cpp
-void SyncInbound(SharedMode::Object* obj) {
+void SyncInbound(SharedMode::Client* client, SharedMode::Object* obj) {
     if (!obj || !obj->Words.IsValid()) return;
+    if (client->IsOwner(obj)) return;
 
-    // Skip if we own this object (we're the authority)
-    if (g_client->IsOwner(obj)) return;
-
-    // Optionally skip if no new data from network
-    if (!g_client->HasBeenUpdatedByPlugin(obj)) return;
+    // Optionally skip if no new data arrived this frame
+    if (!client->HasBeenUpdatedByPlugin(obj, false)) return;
 
     const int32_t* words = obj->Words.Ptr;
-    constexpr int tailWords = sizeof(SharedMode::ObjectTail) / sizeof(int32_t);
-    int maxWords = static_cast<int>(obj->Words.Length) - tailWords;
     int offset = 0;
 
-    // Read position (Vector3 = 3 words)
+    // Position (Vector3 = 3 words)
     float px = word_to_float(words[offset + 0]);
     float py = word_to_float(words[offset + 1]);
     float pz = word_to_float(words[offset + 2]);
     offset += 3;
 
-    // Read rotation (float = 1 word)
+    // Rotation (float = 1 word)
     float rot = word_to_float(words[offset]);
     offset += 1;
 
-    // Read health (int = 1 word)
+    // Health (int32 = 1 word)
     int health = words[offset];
     offset += 1;
 
@@ -246,7 +252,13 @@ void SyncInbound(SharedMode::Object* obj) {
 }
 ```
 
-**Dirty checking**: The SDK tracks which words changed via the Shadow buffer (`Object::Shadow`). `HasBeenUpdatedByPlugin()` tells you if new data arrived this frame. This avoids unnecessary property writes.
+**`HasBeenUpdatedByPlugin` signature:**
+
+```cpp
+bool HasBeenUpdatedByPlugin(Object* obj, bool reset);
+```
+
+When `reset` is `true`, the internal flag is cleared after reading. When `false`, the flag persists until the SDK clears it. Use `true` if you only want to apply once per network update.
 
 ## Spawn Data Serialization
 
@@ -254,26 +266,27 @@ When an object is created, its initial state must be delivered to remote clients
 
 ### Header Data (Spawn Payload)
 
-Passed as the `header`/`headerLength` parameters to `CreateObject()`. This data is delivered to remote clients in the `OnObjectCreated` callback via `ObjectRoot::Header`.
+Passed as the `header`/`headerLength` parameters to `CreateObject()`. This data is delivered to remote clients as `ObjectRoot::Header` when the object arrives.
 
 ```cpp
-// Authority side: create with spawn data
-PackedByteArray spawnData = SerializeSpawnState(instance);
-SharedMode::ObjectRoot* obj = g_client->CreateObject(
+// Authority side: serialize spawn data into a byte buffer
+std::vector<uint8_t> spawnData = SerializeSpawnState(instance);
+
+SharedMode::ObjectRoot* obj = client->CreateObject(
     totalWords, typeRef,
-    reinterpret_cast<const SharedMode::CharType*>(spawnData.data()),
+    reinterpret_cast<const PhotonCommon::CharType*>(spawnData.data()),
     spawnData.size(),
-    sceneIndex, flags
+    sceneIndex, ownerMode
 );
 ```
 
 ```cpp
-// Remote side: read in OnObjectCreated
-g_client->OnObjectCreated = [](SharedMode::ObjectRoot* obj) {
+// Remote side: read in OnObjectReady callback
+subs += client->OnObjectReady.Subscribe([](SharedMode::ObjectRoot* obj) {
     if (obj->Header.Valid()) {
         DeserializeSpawnState(obj->Header.Ptr, obj->Header.Length);
     }
-};
+});
 ```
 
 ### Words Buffer Copy (Immediate State)
@@ -281,16 +294,15 @@ g_client->OnObjectCreated = [](SharedMode::ObjectRoot* obj) {
 After creating the object, copy serialized properties directly to the Words buffer:
 
 ```cpp
-// Authority side: after CreateObject, copy initial state to Words
+// Authority side: after CreateObject
 obj->SetSendUpdates(false);  // Prevent sending before data is ready
 
 // Serialize properties to a temporary buffer
 int32_t tempWords[MAX_WORDS];
 int wordCount = SerializeProperties(tempWords);
 
-// Copy to the object's Words buffer (skip tail area)
-constexpr int tailWords = sizeof(SharedMode::ObjectTail) / sizeof(int32_t);
-int usable = static_cast<int>(obj->Words.Length) - tailWords;
+// Copy to the object's Words buffer (user area only)
+int usable = static_cast<int>(obj->Words.Length) - SharedMode::Object::ExtraTailWords;
 int toCopy = std::min(wordCount, usable);
 memcpy(obj->Words.Ptr, tempWords, toCopy * sizeof(int32_t));
 
@@ -298,30 +310,37 @@ obj->SetSendUpdates(true);
 obj->SetHasValidData(true);
 ```
 
-The Godot integration uses this `memcpy` approach for both spawned objects and scene objects.
-
 ### Scene Objects: Bidirectional Initial Data
 
-Scene objects use `CreateSceneObject()` which has an `alreadyPopulated` out parameter:
+Scene objects use `CreateSceneObject()` which has an `alreadyPopulated` out-parameter:
 
 ```cpp
 bool alreadyPopulated = false;
-SharedMode::ObjectRoot* obj = g_client->CreateSceneObject(
-    alreadyPopulated, totalWords, typeRef,
-    nullptr, 0,              // no header for scene objects
-    sceneSequence, objectId, flags
+SharedMode::ObjectRoot* obj = client->CreateSceneObject(
+    alreadyPopulated,     // [out] was this object already on the network?
+    totalWords,           // total word count including tail
+    typeRef,              // type reference
+    nullptr, 0,           // header (typically empty for scene objects)
+    sceneSequence,        // scene sequence number
+    objectId,             // deterministic scene object ID
+    ownerMode             // ownership mode
 );
 
 if (alreadyPopulated) {
-    // Another client already set up this object -- read Words to engine
+    // Another client already set up this object.
+    // The Words buffer contains network state -- apply to engine.
     DeserializeFromWords(obj);
 } else {
-    // We're first -- write engine defaults to Words
+    // We are first. Write engine defaults INTO the Words buffer.
     SerializeToWords(obj);
+    obj->SetSendUpdates(true);
+    obj->SetHasValidData(true);
 }
 ```
 
-This eliminates the need for a pending queue since each client creates its own scene objects locally and the SDK tells them which direction data should flow.
+**Getting `alreadyPopulated` backwards:**
+- Reading from an unpopulated Words buffer gives zeroed-out defaults
+- Writing to an already-populated Words buffer overwrites network state with stale engine defaults
 
 ## Array Replication
 
@@ -330,44 +349,91 @@ Arrays occupy a fixed region in the Words buffer. The capacity is set at creatio
 ### Memory Layout
 
 ```
-┌───────────┬───────────────────────────────────────────┐
-│ count (1) │ element[0] ... element[max_capacity - 1]  │
-└───────────┴───────────────────────────────────────────┘
+┌───────────┬──────────┬──────────┬─────┬───────────────────────────────┐
+│ count (1) │ elem[0]  │ elem[1]  │ ... │ elem[max_capacity - 1]        │
+└───────────┴──────────┴──────────┴─────┴───────────────────────────────┘
 ```
 
 Total words: `1 + (max_capacity * element_words)`
 
 ### Element Word Counts
 
-| Array Type | Element Words |
-|------------|---------------|
-| `PackedFloat32Array` | 1 |
-| `PackedFloat64Array` | 2 |
-| `PackedInt32Array` | 1 |
-| `PackedInt64Array` | 2 |
-| `PackedVector2Array` | 2 |
-| `PackedVector3Array` | 3 |
-| `PackedVector4Array` | 4 |
-| `PackedColorArray` | 4 |
+| Array Element Type | Words per Element |
+|--------------------|-------------------|
+| `float` | 1 |
+| `double` | 2 |
+| `int32` | 1 |
+| `int64` | 2 |
+| `Vector2` (2x float) | 2 |
+| `Vector3` (3x float) | 3 |
+| `Vector4` (4x float) | 4 |
+| `Color` (4x float) | 4 |
 
 ### Writing Arrays
 
 ```cpp
-int WriteArrayToWords(const float* elements, int elementCount,
-                      int maxCapacity, int32_t* words, int offset) {
-    int totalWords = 1 + maxCapacity; // For float32: 1 word per element
+int WriteFloat32Array(const float* elements, int elementCount,
+                      int maxCapacity, int32_t* words, int offset)
+{
+    int totalWords = 1 + maxCapacity; // float32: 1 word per element
 
-    // Word 0: actual count
-    words[offset] = std::min(elementCount, maxCapacity);
-    int count = words[offset];
+    // Word 0: actual element count (clamped to capacity)
+    int count = (elementCount < maxCapacity) ? elementCount : maxCapacity;
+    words[offset] = count;
 
     // Words 1..count: element data
     for (int i = 0; i < count; i++) {
         words[offset + 1 + i] = float_to_word(elements[i]);
     }
 
-    // Zero remaining slots (prevents stale data)
+    // Zero remaining slots to prevent stale data
     for (int i = count; i < maxCapacity; i++) {
+        words[offset + 1 + i] = 0;
+    }
+
+    return totalWords; // advance offset by this amount
+}
+```
+
+### Reading Arrays
+
+```cpp
+int ReadFloat32Array(float* outElements, int& outCount,
+                     int maxCapacity, const int32_t* words, int offset)
+{
+    int totalWords = 1 + maxCapacity;
+
+    outCount = words[offset];
+    if (outCount < 0) outCount = 0;
+    if (outCount > maxCapacity) outCount = maxCapacity;
+
+    for (int i = 0; i < outCount; i++) {
+        outElements[i] = word_to_float(words[offset + 1 + i]);
+    }
+
+    return totalWords; // advance offset by this amount
+}
+```
+
+### Multi-Word Element Arrays (e.g., Vector3)
+
+```cpp
+int WriteVector3Array(const float* xyz, int elementCount,
+                      int maxCapacity, int32_t* words, int offset)
+{
+    int totalWords = 1 + (maxCapacity * 3); // Vector3: 3 words per element
+
+    int count = (elementCount < maxCapacity) ? elementCount : maxCapacity;
+    words[offset] = count;
+
+    for (int i = 0; i < count; i++) {
+        words[offset + 1 + i * 3 + 0] = float_to_word(xyz[i * 3 + 0]);
+        words[offset + 1 + i * 3 + 1] = float_to_word(xyz[i * 3 + 1]);
+        words[offset + 1 + i * 3 + 2] = float_to_word(xyz[i * 3 + 2]);
+    }
+
+    // Zero remaining
+    for (int i = count * 3; i < maxCapacity * 3; i++) {
         words[offset + 1 + i] = 0;
     }
 
@@ -375,32 +441,15 @@ int WriteArrayToWords(const float* elements, int elementCount,
 }
 ```
 
-### Reading Arrays
-
-```cpp
-int ReadArrayFromWords(float* outElements, int& outCount,
-                       int maxCapacity, const int32_t* words, int offset) {
-    int totalWords = 1 + maxCapacity;
-
-    outCount = words[offset];
-    outCount = std::clamp(outCount, 0, maxCapacity);
-
-    for (int i = 0; i < outCount; i++) {
-        outElements[i] = word_to_float(words[offset + 1 + i]);
-    }
-
-    return totalWords;
-}
-```
-
 **Key constraints:**
-- Max capacity must be set before object creation (it determines buffer size)
-- Arrays exceeding capacity are truncated silently
+- Max capacity must be determined before object creation (it sets the buffer size)
+- Arrays exceeding capacity are silently truncated
 - The full `1 + max_capacity * element_words` region is always reserved, even if the array is empty
+- Capacity cannot change after object creation. To resize, destroy and recreate the object.
 
 ## String Property Sync
 
-Strings use the `NetworkedStringHeap`, which is a separate data structure on each `ObjectRoot`. Strings are **not** stored inline in the Words buffer. Instead, the Words buffer stores a 2-word `StringHandle` (id + generation), and the actual string data lives in the heap.
+Strings use the `NetworkedStringHeap` on each `ObjectRoot`. Strings are **not** stored inline in the Words buffer. Instead, the Words buffer stores a 2-word `StringHandle` (id + generation), and the actual string data lives in the heap.
 
 ### StringHandle Layout
 
@@ -413,33 +462,35 @@ Words[offset + 1] = handle.generation  // uint32_t
 
 ```cpp
 void WriteString(SharedMode::Object* obj, int offset,
-                 const char* str, StringHandle& prevHandle) {
-    // 1. Free the old handle to prevent leaks
-    if (prevHandle.id != 0) {
-        obj->FreeString(prevHandle);
-    }
-
+                 const char* newValue)
+{
     int32_t* words = obj->Words.Ptr;
 
-    if (str == nullptr || str[0] == '\0') {
-        // Empty string: write invalid handle
+    // 1. Read the existing handle from Words
+    SharedMode::StringHandle oldHandle;
+    oldHandle.id = static_cast<uint32_t>(words[offset + 0]);
+    oldHandle.generation = static_cast<uint32_t>(words[offset + 1]);
+
+    // 2. Free the old handle to prevent heap leaks
+    if (oldHandle.id != 0) {
+        obj->FreeString(oldHandle);
+    }
+
+    // 3. Handle empty/null case
+    if (newValue == nullptr || newValue[0] == '\0') {
         words[offset + 0] = 0;
         words[offset + 1] = 0;
-        prevHandle = {0, 0};
         return;
     }
 
-    // 2. Allocate new string in the heap
-    SharedMode::StringHandle handle = obj->AddString(
-        reinterpret_cast<const SharedMode::CharType*>(str)
+    // 4. Allocate new string in the heap
+    SharedMode::StringHandle newHandle = obj->AddString(
+        reinterpret_cast<const PhotonCommon::CharType*>(newValue)
     );
 
-    // 3. Write handle to Words buffer
-    words[offset + 0] = static_cast<int32_t>(handle.id);
-    words[offset + 1] = static_cast<int32_t>(handle.generation);
-
-    // 4. Track for future cleanup
-    prevHandle = handle;
+    // 5. Write handle to Words buffer
+    words[offset + 0] = static_cast<int32_t>(newHandle.id);
+    words[offset + 1] = static_cast<int32_t>(newHandle.generation);
 }
 ```
 
@@ -458,7 +509,7 @@ const char* ReadString(SharedMode::Object* obj, int offset) {
     }
 
     SharedMode::StringMessage status;
-    const SharedMode::CharType* resolved = obj->ResolveString(handle, status);
+    const PhotonCommon::CharType* resolved = obj->ResolveString(handle, status);
 
     if (status != SharedMode::StringMessage::Valid || !resolved) {
         return ""; // Handle expired or error
@@ -468,16 +519,13 @@ const char* ReadString(SharedMode::Object* obj, int offset) {
 }
 ```
 
-### Handle Lifecycle Management
+### Handle Lifecycle Rules
 
-String handles must be actively tracked and freed to avoid leaking heap memory:
-
-1. **Before writing a new string**, free the old handle via `Object::FreeString()`
-2. **Track active handles** per property path so you can free them on change
-3. **On object destruction**, free all active handles
-4. **Spawn data** does NOT use the StringHeap (the object doesn't exist yet). Write invalid handles (`{0, 0}`) at spawn time, and let `sync_outbound()` allocate the first real handle.
-
-**Godot integration pattern**: `FusionSynchronizer` maintains a `std::unordered_map<NodePath, std::pair<uint32_t, uint32_t>>` called `active_string_handles` that tracks the current handle for each string property. Before each outbound sync, it frees the old handle, allocates a new one, and updates the tracking map.
+1. **Free before allocate.** Before writing a new string value, free the old handle via `FreeString()`. The heap is fixed-size; leaking handles exhausts it.
+2. **Track handles per property.** Either read the current handle from the Words buffer each frame, or maintain a side map of active handles.
+3. **On object destruction**, free all active string handles to reclaim heap space.
+4. **Spawn data does NOT use the StringHeap.** At creation time, the heap does not exist on remote clients yet. Write `{0, 0}` (empty handle) in the initial Words buffer, then let `sync_outbound()` allocate the first real handle on the next frame.
+5. **Sub-objects share the root's heap.** All string operations on an `ObjectChild` delegate to `Root()->StringHeap`. See [Sub-Objects](sub-objects.md#string-heap-delegation).
 
 ### StringHandle API
 
@@ -485,36 +533,47 @@ String handles must be actively tracked and freed to avoid leaking heap memory:
 |--------|-----------|-------|
 | `AddString` | `StringHandle Object::AddString(const CharType* str)` | Allocate string in heap |
 | `ResolveString` | `const CharType* Object::ResolveString(const StringHandle&, StringMessage&)` | Look up string data |
-| `FreeString` | `StringHandle Object::FreeString(const StringHandle&)` | Release handle |
+| `FreeString` | `StringHandle Object::FreeString(const StringHandle&)` | Release handle, returns zeroed handle |
+| `IsValidStringHandle` | `bool Object::IsValidStringHandle(const StringHandle&)` | Check if handle is live |
 | `GetStringLength` | `uint32_t Object::GetStringLength(const StringHandle&)` | Get string byte length |
 
-String operations on an `ObjectChild` delegate to `Root()->StringHeap` -- the heap is shared across the entire root object tree.
+### StringMessage Status Codes
 
-See [String Heap](../concepts/string-heap.md) for the conceptual model and [StringHeap Reference](../reference/stringheap-api.md) for the full API.
+| Value | Meaning |
+|-------|---------|
+| `Valid` | String resolved successfully |
+| `NotALiveEntry` | Handle points to a freed entry |
+| `WrongGeneration` | Handle generation does not match (stale handle) |
+| `OutOfRange` | Handle ID exceeds entry array |
+| `WrongSize` | Internal size mismatch |
+| `EmptyString` | Entry exists but string is empty |
+| `InvalidHandle` | Handle ID is 0 |
 
 ## Shadow Buffer and Dirty Detection
 
-Each `Object` has a `Shadow` buffer that mirrors the last-acknowledged state of `Words`. The SDK uses this internally to compute deltas -- only changed words are transmitted.
+Each `Object` has a `Shadow` buffer that mirrors the last-acknowledged state of `Words`. The SDK uses this internally to compute deltas -- only changed words are transmitted over the network.
 
 Your integration does not need to manage the Shadow buffer directly. The key APIs:
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
-| `HasBeenUpdatedByPlugin` | `bool Client::HasBeenUpdatedByPlugin(Object* obj)` | True if new data arrived this frame |
+| `HasBeenUpdatedByPlugin` | `bool Client::HasBeenUpdatedByPlugin(Object* obj, bool reset)` | True if new data arrived from network |
 | `SetHasValidData` | `void Object::SetHasValidData(bool)` | Mark object as having usable data |
 | `SetSendUpdates` | `void Object::SetSendUpdates(bool)` | Enable/disable outbound transmission |
 
 **`SetSendUpdates(false)`** should be set immediately after `CreateObject()` to prevent sending zeroed Words before spawn data is written. Enable it after the initial `memcpy`.
 
-## Putting It All Together
+**`SetHasValidData(true)`** tells the SDK that the Words buffer contains meaningful data. Set it after writing initial state.
 
-A typical integration defines a property list and iterates it for all three operations:
+## Property List Pattern
+
+A typical integration defines a property list and iterates it for all serialization operations. This ensures offset consistency:
 
 ```cpp
 struct PropertyDef {
     const char* name;
     int wordCount;
-    // ... type info, getter/setter
+    // type info, getter/setter function pointers, etc.
 };
 
 static PropertyDef g_properties[] = {
@@ -526,32 +585,44 @@ static PropertyDef g_properties[] = {
 
 int ComputeWordCount() {
     int total = 0;
-    for (auto& p : g_properties) total += p.wordCount;
+    for (const auto& p : g_properties) {
+        total += p.wordCount;
+    }
     return total;
 }
 
-void SyncOutbound(Object* obj) {
+void SyncOutbound(SharedMode::Client* client, SharedMode::Object* obj) {
+    if (!client->IsOwner(obj)) return;
     int offset = 0;
-    for (auto& p : g_properties) {
+    for (const auto& p : g_properties) {
         WriteProperty(obj, p, offset);
+        offset += p.wordCount;
+    }
+    obj->SetSendUpdates(true);
+}
+
+void SyncInbound(SharedMode::Client* client, SharedMode::Object* obj) {
+    if (client->IsOwner(obj)) return;
+    int offset = 0;
+    for (const auto& p : g_properties) {
+        ReadProperty(obj, p, offset);
         offset += p.wordCount;
     }
 }
 
-void SyncInbound(Object* obj) {
+void SerializeSpawnData(SharedMode::Object* obj) {
     int offset = 0;
-    for (auto& p : g_properties) {
-        ReadProperty(obj, p, offset);
+    for (const auto& p : g_properties) {
+        WriteProperty(obj, p, offset);
         offset += p.wordCount;
     }
 }
 ```
 
-This ensures offset consistency across all code paths.
+By iterating the same `g_properties` array in every function, you guarantee that offsets never drift out of sync.
 
 ## Next Steps
 
 - [Sub-Objects](sub-objects.md) -- Child objects with their own Words buffers
 - [Engine Binding](engine-binding.md) -- Connecting SDK objects to engine representations
-- [String Heap](../concepts/string-heap.md) -- Deep dive into heap internals
-- [Serialization](../concepts/serialization.md) -- Conceptual model
+- [Pitfalls](../pitfalls.md) -- Critical gotchas (tail writes, iteration order, string leaks)

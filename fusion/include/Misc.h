@@ -5,10 +5,12 @@
 
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <cstdarg>
 #include <memory>
+#include "SpanCompat.h"
 
 #include "StringType.h"
 
@@ -89,7 +91,7 @@ namespace SharedMode {
             Resize(length);
         }
 
-        explicit Data(const CharType* ptr, const size_t length) {
+        explicit Data(const PhotonCommon::CharType* ptr, const size_t length) {
             if (ptr != nullptr) {
                 Ptr = new uint8_t[length]{};
                 Length = length;
@@ -104,6 +106,14 @@ namespace SharedMode {
         explicit Data(uint8_t *ptr, const size_t length) {
             Ptr = ptr;
             Length = length;
+        }
+
+        operator std::span<const uint8_t>() const {
+            return {Ptr, Length};
+        }
+
+        operator std::span<uint8_t>() const {
+            return {Ptr, Length};
         }
 
         Data Clone() const {
@@ -161,7 +171,7 @@ namespace SharedMode {
     };
 
     class TimerDelta {
-        steady_clock::time_point _start;
+        steady_clock::time_point _start{};
 
     public:
         void Start();
@@ -188,9 +198,9 @@ namespace SharedMode {
 
     template<typename T>
     struct LinkList {
-        T *Head;
-        T *Tail;
-        int Count;
+        T *Head{nullptr};
+        T *Tail{nullptr};
+        int Count{0};
 
         void AddFirst(T *item) {
             if (Head != nullptr) {
@@ -309,6 +319,94 @@ namespace SharedMode {
             return true;
         }
     };
+
+    
+    // Quaternion compression: 4 floats/doubles (16/32 bytes) -> 1 uint32 (4 bytes)
+    // Uses smallest-three encoding with 10 bits per component + 2-bit largest axis index.
+    // Matches the C# server implementation in Maths.cs exactly.
+
+    namespace detail {
+        constexpr int32_t pow10table[] = {1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000};
+        constexpr int32_t pow10(int n) { return pow10table[n]; }
+    }
+
+    template<typename T>
+    inline int32_t FloatQuantize(T value, int decimals) {
+        static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>, "FloatQuantize requires float or double");
+        const auto scale = detail::pow10(decimals);
+        return static_cast<int32_t>(static_cast<double>(value) * scale + (value >= 0 ? 0.5 : -0.5));
+    }
+
+    template<typename T>
+    inline T FloatDequantize(int32_t value, int decimals) {
+        static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>, "FloatDequantize requires float or double");
+        return static_cast<T>(static_cast<double>(value) / detail::pow10(decimals));
+    }
+
+template<typename T>
+    inline uint32_t QuaternionCompress(T x, T y, T z, T w) {
+        static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>, "QuaternionCompress requires float or double");
+        constexpr float UNRANGE = 0.70710678118654752440084436210485f + 0.0000001f;
+        constexpr float ENRANGE = 1.0f / UNRANGE;
+        constexpr uint32_t HALF_ENCODED = (1 << 10) / 2;
+        constexpr float ENCODER = ENRANGE * HALF_ENCODED;
+
+        const float fx = static_cast<float>(x);
+        const float fy = static_cast<float>(y);
+        const float fz = static_cast<float>(z);
+        const float fw = static_cast<float>(w);
+
+        const float absx = fx < 0 ? -fx : fx;
+        const float absy = fy < 0 ? -fy : fy;
+        const float absz = fz < 0 ? -fz : fz;
+        const float absw = fw < 0 ? -fw : fw;
+
+        const int biggestOfXY = (absx > absy) ? 0 : 1;
+        const int biggestOfZW = (absz > absw) ? 2 : 3;
+        const int biggestAxis = ((biggestOfXY == 0) ? absx : absy) > ((biggestOfZW == 2) ? absz : absw) ? biggestOfXY : biggestOfZW;
+
+        float a, b, c, d;
+        switch (biggestAxis) {
+            case 0: a = fy; b = fz; c = fw; d = fx; break;
+            case 1: a = fx; b = fz; c = fw; d = fy; break;
+            case 2: a = fx; b = fy; c = fw; d = fz; break;
+            default: a = fx; b = fy; c = fz; d = fw; break;
+        }
+
+        if (d < 0) { a = -a; b = -b; c = -c; }
+
+        return
+            static_cast<uint32_t>(a * ENCODER + HALF_ENCODED) |
+            static_cast<uint32_t>(b * ENCODER + HALF_ENCODED) << 10 |
+            static_cast<uint32_t>(c * ENCODER + HALF_ENCODED) << 20 |
+            static_cast<uint32_t>(biggestAxis) << 30;
+    }
+
+    template<typename T>
+    inline void QuaternionDecompress(uint32_t buffer, T &outX, T &outY, T &outZ, T &outW) {
+        static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>, "QuaternionDecompress requires float or double");
+        constexpr float UNRANGE = 0.70710678118654752440084436210485f + 0.0000001f;
+        constexpr uint32_t HALF_ENCODED = (1 << 10) / 2;
+        constexpr uint32_t MASK10BITS = 0x3FF;
+        constexpr float DECODER = (1.0f / HALF_ENCODED) * UNRANGE;
+
+        const int acomp = static_cast<int>(buffer & MASK10BITS);
+        const int bcomp = static_cast<int>((buffer >> 10) & MASK10BITS);
+        const int ccomp = static_cast<int>((buffer >> 20) & MASK10BITS);
+        const int biggestAxis = static_cast<int>(buffer >> 30);
+
+        const float a = (acomp - static_cast<int>(HALF_ENCODED)) * DECODER;
+        const float b = (bcomp - static_cast<int>(HALF_ENCODED)) * DECODER;
+        const float c = (ccomp - static_cast<int>(HALF_ENCODED)) * DECODER;
+        const float d = static_cast<float>(std::sqrt(1.0 - (a * a + b * b + c * c)));
+
+        switch (biggestAxis) {
+            case 0: outX = static_cast<T>(d); outY = static_cast<T>(a); outZ = static_cast<T>(b); outW = static_cast<T>(c); break;
+            case 1: outX = static_cast<T>(a); outY = static_cast<T>(d); outZ = static_cast<T>(b); outW = static_cast<T>(c); break;
+            case 2: outX = static_cast<T>(a); outY = static_cast<T>(b); outZ = static_cast<T>(d); outW = static_cast<T>(c); break;
+            default: outX = static_cast<T>(a); outY = static_cast<T>(b); outZ = static_cast<T>(c); outW = static_cast<T>(d); break;
+        }
+    }
 }
 
 #endif

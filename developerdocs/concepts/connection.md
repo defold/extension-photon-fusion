@@ -1,252 +1,409 @@
 # Connection
 
-Fusion uses the Photon Cloud (or a local Photon server) for transport. The connection lifecycle is managed through the `Photon` class, which wraps the Photon LoadBalancing C++ SDK. The `Client` class coordinates Fusion state on top of this connection.
+Fusion uses the Photon Cloud (or a self-hosted Photon server) for transport. The connection lifecycle is managed through `PhotonMatchmaking::RealtimeClient`, which provides an async `Task<Result<T>>` API. The `SharedMode::Client` coordinates Fusion state on top of this connection.
 
-## Client Construction
+## Two-Layer Construction
 
-```cpp
-Client(const CharType* appId,
-       const CharType* appVersion,
-       const ExitGames::LoadBalancing::ClientConstructOptions& options = {});
+Fusion's networking is split into two objects that you construct independently:
+
+```
+ RealtimeClient   <--- Photon transport, rooms, matchmaking
+       |
+ SharedMode::Client  <--- Fusion state, objects, RPCs
 ```
 
-| Parameter | Purpose |
-|-----------|---------|
-| `appId` | Photon application ID from the Photon Dashboard |
-| `appVersion` | Version string for client compatibility matching (clients with different versions cannot join the same room) |
-| `options` | Photon-level options (region selection mode, protocol, etc.) |
-
-The `Client` constructor creates an internal `Photon` instance and a `Notify::Connection` for reliable state delivery. No network I/O happens until `ConnectCloud()` or `ConnectLocal()` is called.
-
-Access the Photon layer via `Client::Photon()`:
+### Step 1: RealtimeClient
 
 ```cpp
-SharedMode::Photon& photon = client->Photon();
+PhotonMatchmaking::ClientConstructOptions options;
+options.appId      = PHOTON_STR("your-app-id");
+options.appVersion = PHOTON_STR("1.0");
+
+auto realtimeClient = std::make_unique<PhotonMatchmaking::RealtimeClient>(options);
 ```
+
+#### ClientConstructOptions
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `appId` | `StringType` | -- | Photon application ID from the Dashboard |
+| `appVersion` | `StringType` | -- | Client version for room isolation |
+| `protocol` | `ConnectionProtocol` | `Default` | UDP or TCP |
+| `useAlternativePorts` | `bool` | `false` | Use alternative port range |
+| `regionSelectionMode` | `RegionSelectionMode` | `Default` | How region is chosen |
+| `autoLobbyStats` | `bool` | `false` | Auto-request lobby statistics |
+| `serialization` | `SerializationProtocol` | `Protocol1_8` | Wire format version |
+| `disconnectTimeoutMs` | `optional<int>` | -- | Override disconnect timeout |
+| `pingIntervalMs` | `optional<int>` | -- | Override ping interval |
+| `enableCrc` | `optional<bool>` | -- | CRC checking |
+| `sentCountAllowance` | `optional<int>` | -- | Outgoing command buffer |
+| `quickResendAttempts` | `optional<uint8_t>` | -- | Fast retransmit count |
+| `limitOfUnreliableCommands` | `optional<int>` | -- | Unreliable queue cap |
+
+### Step 2: SharedMode::Client
+
+```cpp
+auto fusionClient = std::make_unique<SharedMode::Client>(*realtimeClient);
+```
+
+The `Client` constructor takes a reference to the `RealtimeClient` and internally subscribes to its events via `Broadcaster`. No network I/O happens until you connect.
 
 ## Connecting
 
-### Cloud Connection
+### Async Flow with Task<Result<T>>
+
+All connection and room operations return `Task<Result<T>>`, which is a C++20 coroutine type. Tasks complete asynchronously as `RealtimeClient::Service()` is called each frame.
+
+```
+Connect() --> Service() loop --> SelectRegion() --> Service() loop --> JoinOrCreateRoom()
+```
+
+#### ConnectOptions
 
 ```cpp
-void Client::ConnectCloud(const CharType* region,
-                          const CharType* userId,
-                          const CharType* serverAddress);
+PhotonMatchmaking::ConnectOptions connectOpts;
+connectOpts.auth.userId = PHOTON_STR("player-123");
+connectOpts.username    = PHOTON_STR("PlayerName");
+connectOpts.serverType  = PhotonMatchmaking::ServerType::NameServer;
 ```
 
-Connects to the Photon Cloud. Parameters:
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `auth` | `AuthenticationValues` | -- | User ID, custom auth type, parameters, data |
+| `username` | `StringType` | -- | Display name |
+| `serverType` | `ServerType` | `NameServer` | Which server to connect to |
+| `serverAddress` | `StringType` | -- | Custom server address |
+| `tryUseDatagramEncryption` | `bool` | `false` | Encrypt UDP packets |
+| `useBackgroundSendReceiveThread` | `bool` | `true` | Background I/O thread |
 
-| Parameter | Purpose |
-|-----------|---------|
-| `region` | Photon region code (e.g., `"us"`, `"eu"`, `"asia"`) |
-| `userId` | Unique user identifier for this client |
-| `serverAddress` | Custom name server address, or empty string (`""`) for the default Photon name server |
-
-The connection process is asynchronous. After calling `ConnectCloud()`, you **must** continue calling `Photon::Service(true)` every frame to pump the connection state machine. The status progresses through several states before reaching `Connected`.
-
-### Local Connection
+#### AuthenticationValues
 
 ```cpp
-void Client::ConnectLocal(const CharType* endpoint);
+struct AuthenticationValues {
+    PhotonCommon::StringType userId;
+    CustomAuthenticationType type;  // None, Custom, Steam, Facebook, etc.
+    PhotonCommon::StringType parameters;
+    std::variant<std::monostate, std::vector<uint8_t>, StringType, PropertyMap> data;
+};
 ```
 
-Connects to a local Photon server instance (e.g., for development or LAN play). The `endpoint` is typically `"localhost:5055"` or similar.
-
-## Connection Status State Machine
-
-```
-None (0)
-  |
-  v
-Connecting (1) --[error]--> Error (2)
-  |                           |
-  v                           v
-Connected (4)            Disconnected (3)
-  |
-  v
-JoiningRoom (5) --[error]--> Disconnected (3)
-  |
-  v
-InRoom (6) --[leave/error]--> Disconnected (3)
-  |
-  |--[timeout]--> TimeOut (7)
-  |--[invalid region]--> InvalidRegion (8)
-```
-
-### Status Constants
+### Connection Sequence
 
 ```cpp
-constexpr int PhotonClient_StatusNone         = 0;
-constexpr int PhotonClient_StatusConnecting   = 1;
-constexpr int PhotonClient_StatusError        = 2;
-constexpr int PhotonClient_StatusDisconnected = 3;
-constexpr int PhotonClient_StatusConnected    = 4;
-constexpr int PhotonClient_StatusJoiningRoom  = 5;
-constexpr int PhotonClient_StatusInRoom       = 6;
-constexpr int PhotonClient_StatusTimeOut      = 7;
-constexpr int PhotonClient_StatusInvalidRegion = 8;
+// 1. Connect to name server
+auto connectResult = co_await realtimeClient->Connect(connectOpts);
+if (connectResult.IsErr()) { /* handle error */ }
+
+// 2. Select region (or use best region)
+auto regionResult = co_await realtimeClient->SelectRegion(PHOTON_STR("us"));
+if (regionResult.IsErr()) { /* handle error */ }
+
+// 3. Join or create room
+PhotonMatchmaking::CreateRoomOptions roomOpts;
+roomOpts.maxPlayers = 8;
+roomOpts.plugins    = { PHOTON_STR("Fusion3Plugin") };
+
+auto roomResult = co_await realtimeClient->JoinOrCreateRoom(
+    PHOTON_STR("my-room"), roomOpts);
+if (roomResult.IsErr()) { /* handle error */ }
+
+PhotonMatchmaking::MutableRoomView room = std::move(roomResult).GetValue();
 ```
 
-### Status Queries
+If you are not using coroutines, you can poll `Task::IsReady()` in your frame loop:
 
 ```cpp
-int  Photon::Status() const;           // Raw status code
-bool Photon::IsConnected() const;      // Status >= Connected (4)
-bool Photon::IsJoiningOrInRoom() const; // Status >= JoiningRoom (5)
-bool Photon::IsInRoom() const;         // Status == InRoom (6)
+auto task = realtimeClient->Connect(connectOpts);
+
+// In frame loop:
+realtimeClient->Service(true);
+if (task.IsReady()) {
+    auto result = task.Get();
+    // proceed...
+}
 ```
-
-### Region Selection Modes
-
-```cpp
-constexpr uint8_t PhotonClient_RegionSelectionMode_Default = 0;
-constexpr uint8_t PhotonClient_RegionSelectionMode_Select  = 1;
-constexpr uint8_t PhotonClient_RegionSelectionMode_Best    = 2;
-```
-
-Set via `ClientConstructOptions::setRegionSelectionMode()` before constructing the `Client`. Mode `Select` (1) allows you to specify the region directly in `ConnectCloud()`. Mode `Best` (2) auto-selects the lowest-latency region.
 
 ## Room Operations
 
-All room operations require `IsConnected() == true`. They are asynchronous -- the status transitions to `JoiningRoom` and eventually `InRoom` (or back to `Disconnected` on failure).
+All room operations require `IsConnected() == true` and return `Task<Result<MutableRoomView>>` (except `LeaveRoom` which returns `Task<Result<void>>`).
 
-### Join or Create
+| Method | Behavior |
+|--------|----------|
+| `CreateRoom(name, createOpts)` | Create a new room. Fails if name exists. |
+| `JoinRoom(name, joinOpts)` | Join existing room by name. |
+| `JoinOrCreateRoom(name, createOpts, joinOpts)` | Join if exists, otherwise create. Most common. |
+| `JoinRandomRoom(matchmakingOpts)` | Join any available room matching filters. |
+| `JoinRandomOrCreateRoom(createOpts, matchmakingOpts)` | Random join with create fallback. |
+| `LeaveRoom(willComeBack, sendAuthCookie)` | Leave current room. |
 
-```cpp
-void Photon::JoinOrCreateRoom(const CharType* room,
-                               const ExitGames::LoadBalancing::RoomOptions& options = {});
-```
+### CreateRoomOptions
 
-Joins an existing room by name, or creates it if it does not exist. This is the most common room entry point.
+| Field | Type | Default |
+|-------|------|---------|
+| `isVisible` | `bool` | `true` |
+| `isOpen` | `bool` | `true` |
+| `maxPlayers` | `uint8_t` | `0` (unlimited) |
+| `customProperties` | `PropertyMap` | `{}` |
+| `lobbyProperties` | `vector<StringType>` | `{}` |
+| `playerTtlMs` | `int` | `0` |
+| `emptyRoomTtlMs` | `int` | `0` |
+| `suppressRoomEvents` | `bool` | `false` |
+| `publishUserId` | `bool` | `false` |
+| `plugins` | `vector<StringType>` | `{}` |
+| `expectedUsers` | `vector<StringType>` | `{}` |
 
-### Join Existing
+### JoinRoomOptions
 
-```cpp
-void Photon::JoinRoom(const CharType* room);
-void Photon::JoinRoomRandom();
-void Photon::JoinOrCreateRoomRandom(const CharType* room,
-                                     const ExitGames::LoadBalancing::RoomOptions& options = {});
-```
+| Field | Type | Default |
+|-------|------|---------|
+| `rejoin` | `bool` | `false` |
+| `cacheSliceIndex` | `int` | `0` |
+| `expectedUsers` | `vector<StringType>` | `{}` |
 
-- `JoinRoom` -- fails if the room does not exist.
-- `JoinRoomRandom` -- joins any available room.
-- `JoinOrCreateRoomRandom` -- hybrid: tries random join, falls back to create.
+### MatchmakingOptions
 
-### Create
+| Field | Type | Default |
+|-------|------|---------|
+| `filter` | `PropertyMap` | `{}` |
+| `maxPlayers` | `uint8_t` | `0` |
+| `mode` | `MatchmakingMode` | `FillRoom` |
+| `sqlFilter` | `StringType` | `{}` |
+| `expectedUsers` | `vector<StringType>` | `{}` |
 
-```cpp
-void Photon::CreateRoom(const CharType* room,
-                         const ExitGames::LoadBalancing::RoomOptions& options = {});
-```
+### MutableRoomView
 
-Creates a new room. Fails if a room with the same name already exists.
-
-### Leave
-
-```cpp
-void Photon::LeaveRoom();
-```
-
-Leaves the current room. Triggers the `OnLeaveRoom` callback chain. All local objects are cleaned up by the SDK.
-
-## Callbacks
-
-The `Client` provides `std::function` callbacks for connection lifecycle events:
-
-```cpp
-// Room events
-std::function<void()> OnRoomJoin;
-std::function<void()> OnRoomLeave;
-
-// Player events (on the Photon layer)
-// Set via Photon's internal callbacks:
-std::function<void(int)> OnPlayerJoinedCallback;
-std::function<void(int)> OnPlayerLeftCallback;
-```
-
-`OnRoomJoin` fires after the client successfully enters a room (status transitions to `InRoom`). `OnRoomLeave` fires when the client exits a room for any reason (explicit leave, kick, disconnect).
-
-These callbacks fire during `Photon::Service()` dispatch, which runs on the same thread as your frame loop.
-
-## Fusion-Level State Queries
-
-Once in a room, the `Client` provides:
+Once in a room, `MutableRoomView` provides read and write access to room state:
 
 ```cpp
-bool Client::IsRunning() const;        // Has config AND is in room
-bool Client::IsMasterClient();         // This client is the room's master
-PlayerId Client::LocalPlayerId();      // This client's PlayerId
-int32_t Client::PlayerCount() const;   // Number of players in the room
-double Client::GetRtt() const;         // Round-trip time in seconds
+auto room = realtimeClient->GetCurrentRoom();
+if (room) {
+    auto name = room->GetName();
+    int count = room->GetPlayerCount();
+    auto& players = room->GetPlayers();
+    int master = room->GetMasterClientId();
+
+    // Mutations
+    room->SetOpen(false);
+    room->SetMaxPlayers(4);
+    room->SetProperties({{ PHOTON_STR("map"), PropertyValue(PHOTON_STR("arena")) }});
+}
 ```
 
-### Master Client
-
-The master client is the authoritative peer for operations that require a single decision-maker (scene changes, global state). It is automatically assigned by the Photon server -- typically the first player to join the room. If the master disconnects, the server promotes another player.
+## ConnectionState
 
 ```cpp
-constexpr PlayerId MasterClientPlayerId = 0xFFFFFFFF;
-
-int32_t Photon::MasterClient();  // Returns the master's player number
+enum class ConnectionState : uint8_t {
+    Disconnected,
+    Connecting,
+    Connected,
+    JoiningRoom,
+    InRoom,
+    LeavingRoom,
+    Disconnecting
+};
 ```
 
-## Disconnect and Shutdown
+```
+Disconnected
+     |
+     v
+Connecting --[error]--> Disconnected
+     |
+     v
+Connected
+     |
+     v
+JoiningRoom --[error]--> Disconnected
+     |
+     v
+InRoom --[leave]--> LeavingRoom --> Disconnected
+     |
+     +--[timeout/error]--> Disconnecting --> Disconnected
+```
 
-### Graceful Disconnect
+### State Queries
 
 ```cpp
-bool Photon::Disconnect();
+ConnectionState realtimeClient->GetState();
+bool realtimeClient->IsConnected();
+bool realtimeClient->IsInRoom();
+bool realtimeClient->IsInLobby();
+DisconnectCause realtimeClient->GetDisconnectCause();
 ```
 
-Disconnects from the Photon server. Triggers `OnLeaveRoom` (if in a room), then `OnDisconnected`. The client can reconnect by calling `ConnectCloud()` or `ConnectLocal()` again.
-
-### Shutdown
+## DisconnectCause
 
 ```cpp
-void Client::Shutdown(bool development);
+enum class DisconnectCause : int {
+    None = 0,
+    DisconnectByServerUserLimit = 1,
+    ExceptionOnConnect = 2,
+    DisconnectByServer = 3,
+    DisconnectByServerLogic = 4,
+    TimeoutDisconnect = 5,
+    Exception = 6,
+    InvalidAuthentication = 7,
+    MaxCCUReached = 8,
+    InvalidRegion = 9,
+    OperationNotAllowedInCurrentState = 10,
+    CustomAuthenticationFailed = 11,
+    ClientVersionTooOld = 12,
+    ClientVersionInvalid = 13,
+    DashboardVersionInvalid = 14,
+    AuthenticationTicketExpired = 15,
+    DisconnectByOperationLimit = 16
+};
 ```
 
-Full teardown. Destroys all objects, closes the connection, and releases internal resources. After `Shutdown()`, the `Client` instance should be deleted. The `development` flag controls whether additional diagnostic logging is emitted.
+## RealtimeClient Broadcasters
 
-## Typical Connection Flow
+The `RealtimeClient` exposes broadcasters for connection lifecycle events. Subscribe using `Broadcaster::Subscribe()` and manage lifetime with `SubscriptionBag`:
+
+```cpp
+PhotonCommon::SubscriptionBag subs;
+
+subs += realtimeClient->OnDisconnected.Subscribe([](DisconnectCause cause) {
+    // Handle disconnect
+});
+
+subs += realtimeClient->OnPlayerJoined.Subscribe([](const PlayerView& player) {
+    // Handle player join
+});
+
+subs += realtimeClient->OnPlayerLeft.Subscribe([](int playerNumber, bool isInactive) {
+    // Handle player leave
+});
+
+subs += realtimeClient->OnMasterClientChanged.Subscribe([](int newId, int oldId) {
+    // Handle master migration
+});
+
+subs += realtimeClient->OnError.Subscribe([](ErrorCode code, StringViewType msg) {
+    // Handle error
+});
+```
+
+Available broadcasters on `RealtimeClient`:
+
+| Broadcaster | Signature |
+|-------------|-----------|
+| `OnDisconnected` | `void(DisconnectCause)` |
+| `OnError` | `void(ErrorCode, StringViewType)` |
+| `OnRoomPropertiesChanged` | `void(const PropertyMap&)` |
+| `OnRoomListUpdated` | `void(const vector<RoomListing>&)` |
+| `OnMasterClientChanged` | `void(int newId, int oldId)` |
+| `OnPlayerJoined` | `void(const PlayerView&)` |
+| `OnPlayerLeft` | `void(int playerNumber, bool isInactive)` |
+| `OnPlayerPropertiesChanged` | `void(int playerNumber, const PropertyMap&)` |
+| `OnEvent` | `void(uint8_t eventCode, int senderId, span<const uint8_t> data)` |
+| `OnDirectMessage` | `void(int senderId, span<const uint8_t> data, bool isRelay)` |
+| `OnRoomJoined` | `void()` |
+| `OnRoomLeft` | `void()` |
+| `OnWarning` | `void(int warningCode)` |
+
+## Starting Fusion
+
+After connecting and joining a room, call `Client::Start()` to initialize Fusion state replication:
+
+```cpp
+fusionClient->Start();
+```
+
+`Start()` creates the internal `Notify::Connection` and begins the Fusion protocol handshake with the server plugin. The `OnFusionStart` broadcaster fires when Fusion is ready:
+
+```cpp
+subs += fusionClient->OnFusionStart.Subscribe([&]() {
+    // Fusion is ready -- create objects, load scene, etc.
+});
+```
+
+### OnFusionStart vs OnRoomJoined
+
+- `OnRoomJoined` (on `RealtimeClient`) fires when the Photon room is entered.
+- `OnFusionStart` (on `Client`) fires when the Fusion protocol handshake completes and the server plugin config is received.
+
+You must wait for `OnFusionStart` before creating objects or sending RPCs.
+
+### OnForcedDisconnect
+
+```cpp
+fusionClient->OnForcedDisconnect.Subscribe([](std::string message) {
+    // Server forced us out
+});
+```
+
+Fires when the server plugin forcibly disconnects the client (e.g., version mismatch, ban).
+
+## Fusion-Level Queries
+
+Once Fusion is running:
+
+```cpp
+bool fusionClient->IsRunning();          // Has config AND connection active
+bool fusionClient->IsMasterClient();     // Local client is room master
+PlayerId fusionClient->LocalPlayerId();  // Local player ID
+int32_t fusionClient->PlayerCount();     // Number of players
+double fusionClient->GetRtt();           // Round-trip time (seconds)
+SdkVersion fusionClient->GetSdkVersion(); // SDK version info
+```
+
+## Shutdown
+
+```cpp
+fusionClient->Shutdown();
+```
+
+Full teardown. Destroys all Fusion objects, closes the Notify connection, and releases internal resources. After `Shutdown()`, the `Client` instance should be destroyed. To disconnect from Photon cleanly, also call:
+
+```cpp
+co_await realtimeClient->Disconnect();
+```
+
+## Complete Connection Flow
 
 ```cpp
 // 1. Construct
-auto* client = new SharedMode::Client(appId, appVersion, options);
+auto realtimeClient = std::make_unique<PhotonMatchmaking::RealtimeClient>(constructOpts);
+auto fusionClient   = std::make_unique<SharedMode::Client>(*realtimeClient);
 
-// 2. Set up callbacks
-client->OnRoomJoin = [&]() { /* ready to create objects */ };
-client->OnRoomLeave = [&]() { /* cleanup */ };
+// 2. Subscribe to Fusion events
+PhotonCommon::SubscriptionBag subs;
+subs += fusionClient->OnFusionStart.Subscribe([&]() {
+    // Ready to create objects
+    create_scene_objects();
+});
+subs += fusionClient->OnObjectReady.Subscribe([](SharedMode::ObjectRoot* obj) {
+    // Remote object ready
+});
 
-// 3. Connect
-client->ConnectCloud(region, userId, FUSION_STR(""));
+// 3. Connect + join room (coroutine or polling)
+co_await realtimeClient->Connect(connectOpts);
+co_await realtimeClient->SelectRegion(PHOTON_STR("us"));
+co_await realtimeClient->JoinOrCreateRoom(PHOTON_STR("my-room"), roomOpts);
 
-// 4. Frame loop: must call Service() every frame
+// 4. Start Fusion
+fusionClient->Start();
+
+// 5. Frame loop
 while (running) {
-    client->Photon().Service(true);
+    realtimeClient->Service(true);
 
-    if (client->Photon().IsConnected() && !joinedRoom) {
-        client->Photon().JoinOrCreateRoom(roomName);
-        joinedRoom = true;
-    }
-
-    if (client->IsRunning()) {
-        // Full frame loop: outbound -> End -> Begin -> inbound
+    if (fusionClient->IsRunning()) {
         sync_outbound();
-        client->UpdateFrameEnd();
-        client->UpdateFrameBegin(delta);
+        fusionClient->UpdateFrameEnd();
+        fusionClient->UpdateFrameBegin(delta);
         sync_inbound();
     }
 }
 
-// 5. Shutdown
-client->Shutdown(false);
-delete client;
+// 6. Shutdown
+fusionClient->Shutdown();
+co_await realtimeClient->Disconnect();
 ```
 
 ## Related
 
 - [Frame Loop](frame-loop.md) -- The mandatory 3-step frame sequence
-- [Architecture](architecture.md) -- Layered design and Photon transport
-- [Client API](../reference/client-api.md) -- Full method reference
-- [Photon API](../reference/photon-api.md) -- Photon class reference
+- [Architecture](architecture.md) -- Layered design and namespaces
+- [Objects](objects.md) -- Object creation after `OnFusionStart`
+- [Scene Management](scene-management.md) -- Scene loading on connect

@@ -3,7 +3,6 @@
 #ifndef SHAREDCLIENT_NOTIFY_H
 #define SHAREDCLIENT_NOTIFY_H
 
-#include "Photon.h"
 #include "Misc.h"
 #include <cstdint>
 #include <optional>

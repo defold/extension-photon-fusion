@@ -1,15 +1,20 @@
 // Copyright Exit Games GmbH. All Rights Reserved.
 
-
 #ifndef SHAREDCLIENT_GAME_H
 #define SHAREDCLIENT_GAME_H
 
 #include "Notify.h"
 #include "Misc.h"
 #include "Types.h"
+#include "RealtimeClient.h"
+
 #include <string>
 #include <unordered_map>
+#include <map>
 #include <set>
+#include <tuple>
+
+#include "SubscriptionBag.h"
 
 template<>
 struct std::hash<SharedMode::ObjectId> {
@@ -22,18 +27,6 @@ struct std::hash<SharedMode::ObjectId> {
 };
 
 
-template<>
-struct std::hash<SharedMode::AOILocation> {
-	std::size_t operator()(const SharedMode::AOILocation &k) const noexcept {
-		size_t hash = 17;
-		hash = hash * 31 + k.X;
-		hash = hash * 31 + k.Y;
-		hash = hash * 31 + k.Z;
-		return hash;
-	}
-};
-
-
 namespace SharedMode {
 	class Client;
 
@@ -41,7 +34,9 @@ namespace SharedMode {
 		Local = 0,
 		Remote = 1,
 		SceneChange = 2,
-		Shutdown = 3
+		Shutdown = 3,
+		RejectedNotOwner = 4,
+		ForceDestroy = 5
 	};
 
 	enum LogLevel : uint8_t {
@@ -74,13 +69,11 @@ namespace SharedMode {
 	};
 
 	class Client {
-		bool _expectingEnd;
+		bool _expectingEnd{false};
 
 		bool _configEmpty{true};
 		double _clientSendRate{30};
-		bool _aoiUsed;
-		int32_t _aoiCellSize;
-		std::set<AOILocation> _aoiLocations{};
+		std::map<uint64_t, uint8_t> _interestKeys{};
 
 		double _timeDiff{0};
 		double _localClock{0};
@@ -89,26 +82,33 @@ namespace SharedMode {
 
 		uint32_t _objectCounter{0};
 		Tick _sendTick{0};
+		Tick _receiveCounter{0};
 		double _sendClock{0};
 
 		uint32_t _sceneSequence;
 		Data _sceneData;
 
+		struct PendingDestroyedMapActors {
+			uint32_t SceneIndex{0};
+			uint32_t SceneSequence{0};
+			std::vector<ObjectId> Ids{};
+		};
+		PendingDestroyedMapActors _pendingDestroyedMapActors{};
+
 		std::unordered_map<ObjectId, Object *> _objects{};
 		std::unordered_map<ObjectId, ObjectRoot *> _objectsRoots{};
 
-		Photon _photon;
+		PhotonMatchmaking::RealtimeClient* realtimeClient;
+		PhotonCommon::SubscriptionBag realtimeSubscriptions;
+
 		PhotonNotifyPlatform _photonPlatform;
 		Notify::Connection *_connection{nullptr};
 
 		WriteBuffer _rpcBuffer{};
 
-
-		void OnJoinRoom();
-
-		void OnLeaveRoom();
-
 		void OnDataEvent(uint8_t code, Data data);
+
+		void SubscribeToRealtimeCallbacks();
 
 		void PacketLost(Notify::Channel &channel, void *user, Data data);
 
@@ -117,6 +117,8 @@ namespace SharedMode {
 		void RpcPacketReceived(Data data);
 
 		void DestroyObjectFromRemote(const ObjectRoot *obj, DestroyModes mode);
+		void DestroySubObjectFromRemote(ObjectChild *obj);
+		void RemoveSubObjectFromParent(ObjectChild *obj);
 
 		void StatePacketReceived(Data data);
 
@@ -124,7 +126,7 @@ namespace SharedMode {
 
 		void SceneChange(const Data &rpc);
 
-
+		void ApplyPendingDestroyedMapActors();
 
 		void PacketQueue();
 
@@ -134,11 +136,13 @@ namespace SharedMode {
 
 		void CheckForMutatedState(const Object *obj, Tick tick);
 
+		bool WriteObjectRoot(WriteBuffer& writer, ObjectPacketEnvelope* envelope, ObjectRoot* root, bool force);
+
 		void PacketQueueState();
 
 		bool WriteDirtyWords(const Object *obj, WriteBuffer &writer, Tick remoteTickAcked);
 		void WriteEmptyStringHeap(WriteBuffer& writer);
-		uint8_t WriteStringHeap(ObjectRoot* obj, WriteBuffer& writer, Tick remoteTickAcked,  Tick tick);
+		uint8_t WriteStringHeap(Object* obj, WriteBuffer& writer, Tick remoteTickAcked, Tick tick);
 
 		void ServerTimeReceived(double serverTime);
 
@@ -148,36 +152,55 @@ namespace SharedMode {
 
 		bool ReadObjectData(Object *obj, ReadBuffer &reader);
 
-		bool ReadStringHeap(ObjectRoot *obj, ReadBuffer &reader, bool stringHeapEntriesChanged, bool stringHeapDataChanged);
+		bool ReadStringHeap(Object *obj, ReadBuffer &reader, bool stringHeapEntriesChanged, bool stringHeapDataChanged);
 
 		Object *ReadObjectHeader(ObjectId id, ReadBuffer &reader, bool create, PlayerId owner, bool root,
 		                         bool allowCreate);
 
 		static ObjectTail &GetTail(const Object *obj);
+		static ObjectId *GetRequiredObjects(const Object *obj);
+
+		void TryFireObjectReady(ObjectRoot *obj);
 
 		void SkipObjectData(ReadBuffer &reader);
 		void SkipStringHeap(ReadBuffer& reader, bool stringHeapEntriesChanged, bool stringHeapDataChanged);
 
+		void SetInterestKey(Object *obj, uint64_t key);
+
 	public:
+		int GetSendTick() const { return _sendTick; }
+		int GetReceivedCounter() const { return _receiveCounter; }
 		ObjectRoot *GetRoot(Object *obj) const;
 		const ObjectRoot *GetRoot(const Object *obj) const;
 
 		double NetworkTimeDiff() const {  return _timeDiff; }
 
 		bool DestroyObjectLocal(ObjectRoot *obj, bool engineObjectAlreadyDestroyed);
+		bool DestroySubObjectLocal(ObjectChild *obj);
 
-		bool AreaOfInterestUsed() const;
-
-		int32_t AreaOfInterestCellSize() const;
-
-		std::set<AOILocation>& GetAreaOfInterestLocations();
-		AOILocation CalculateAreaOfInterestLocation(double x, double y, double z) const;
+		std::map<uint64_t, uint8_t>& GetInterestKeys();
 
 		bool IsRoot(const Object *object);
 
-		void SetAreaOfInterestLocation(const Object *obj, AOILocation location);
+		bool HasSetInterestKey(Object *obj);
+		void ClearInterestKey(Object *obj);
 
-		ObjectFlags SanitizeFlags(ObjectFlags flags) const;
+		void SetGlobalInterestKey(Object *obj);
+		void SetUserInterestKey(Object *obj, uint64_t key);
+		void SetAreaInterestKey(Object *obj, uint64_t key);
+		
+		InterestKeyType GetInterestKeyType(Object *obj);
+
+		void ClearAllKeys();
+		void ClearAreaKeys();
+		void ClearUserKeys();
+		void SetAreaKeys(const std::vector<std::tuple<uint64_t, uint8_t>>& keys);
+		void AddUserKey(uint64_t key, uint8_t sendRate = 0);
+		void RemoveUserKey(uint64_t key);
+		std::vector<std::tuple<uint64_t, uint8_t>> GetAllAreaKeys() const;
+		std::vector<std::tuple<uint64_t, uint8_t>> GetAllUserKeys() const;
+
+		ObjectOwnerModes SanitizeOwnerMode(ObjectOwnerModes ownerMode) const;
 
 		void SetWantOwner(Object *obj);
 
@@ -191,34 +214,39 @@ namespace SharedMode {
 		std::unordered_map<ObjectId, Object *> &AllObjects() { return _objects; }
 		std::unordered_map<ObjectId, ObjectRoot *> &AllRootObjects() { return _objectsRoots; }
 
-		std::function<void()> OnRoomJoin;
-		std::function<void()> OnRoomLeave;
+		PhotonCommon::Broadcaster<void()> OnFusionStart;
+		PhotonCommon::Broadcaster<void(std::string message)> OnForcedDisconnect;
+		PhotonCommon::Broadcaster<void(Rpc &)> OnRpc;
+		PhotonCommon::Broadcaster<void(uint32_t index, uint32_t sequence, Data &)> OnSceneChange;
+		PhotonCommon::Broadcaster<void(ObjectRoot *)> OnObjectOwnerChanged;
+		PhotonCommon::Broadcaster<void(ObjectRoot *)> OnObjectPredictionOverride;
+		PhotonCommon::Broadcaster<void(ObjectRoot *)> OnObjectReady;
+		PhotonCommon::Broadcaster<void(ObjectChild *)> OnSubObjectCreated;
+		PhotonCommon::Broadcaster<void(const ObjectRoot *, DestroyModes)> OnObjectDestroyed;
+		PhotonCommon::Broadcaster<void(ObjectChild *, DestroyModes)> OnSubObjectDestroyed;
+		PhotonCommon::Broadcaster<void(ObjectRoot *)> OnInterestEnter;
+		PhotonCommon::Broadcaster<void(ObjectRoot *)> OnInterestExit;
+		PhotonCommon::Broadcaster<void(ObjectId)> OnDestroyedMapActor;
 
-		std::function<void(Rpc &)> OnRpc;
-		std::function<void(uint32_t index, uint32_t sequence, Data &)> OnSceneChange;
-
-		std::function<void(ObjectRoot *)> OnObjectOwnerChanged;
-		std::function<void(ObjectRoot *)> OnObjectPredictionOverride;
-		std::function<void(ObjectRoot *)> OnObjectCreated;
-		std::function<void(ObjectChild *)> OnSubObjectCreated;
-		std::function<void(const ObjectRoot *, DestroyModes)> OnObjectDestroyed;
-
-		Client(const CharType* appId, const CharType* appVersion, const ExitGames::LoadBalancing::ClientConstructOptions& clientConstructOptions = ExitGames::LoadBalancing::ClientConstructOptions());
+		explicit Client(PhotonMatchmaking::RealtimeClient& realtimeClient);
 
 		~Client();
 
-		Photon &Photon() { return _photon; }
+		void Start();
+		void Stop();
+
+		PhotonMatchmaking::RealtimeClient& GetRealtimeClient() { return *realtimeClient; }
 
 		static SdkVersion GetSdkVersion();
 
-		bool IsRunning() const { return !_configEmpty && _photon.IsInRoom(); }
+		bool IsRunning() const { return _connection != nullptr && !_configEmpty; }
 
 		bool IsMasterClient();
 
 		PlayerId LocalPlayerId();
 
-		Rpc CreateUserRpc(uint64_t id, PlayerId targetPlayer, ObjectId targetObject, uint64 DescriptorTypeHash,
-		                  uint64 EventHash, const char *data, size_t dataLength);
+		Rpc CreateUserRpc(uint64_t id, PlayerId targetPlayer, ObjectId targetObject, uint64_t DescriptorTypeHash,
+		                  uint64_t EventHash, const char *data, size_t dataLength);
 
 		bool SendUserRpc(const Rpc &rpc);
 
@@ -226,23 +254,19 @@ namespace SharedMode {
 
 		double GetTime(const Object *obj);
 
-		bool HasBeenUpdatedByPlugin(Object *obj);
+		bool HasBeenUpdatedByPlugin(Object *obj, bool reset);
 
 		double GetRtt() const;
-
-		void ConnectCloud(const CharType* region, const CharType* userId, const CharType* serverAddress);
-
-		void ConnectLocal(const CharType* endpoint);
 
 		void UpdateFrameBegin(double dt);
 
 		void UpdateFrameEnd();
 
-		void UpdateSocketOnly();
+		void UpdateServiceOnly();
 
-		void Shutdown(bool development);
+		void Shutdown();
 
-		void ChangeScene(uint32_t index, uint32_t sequence, const CharType* data);
+		void ChangeScene(uint32_t index, uint32_t sequence, const PhotonCommon::CharType* data);
 
 		void StateUpdatesPause();
 
@@ -260,7 +284,8 @@ namespace SharedMode {
 
 		int32_t PlayerCount() const;
 
-		void SetObjectPriority(ObjectId id, int32_t priority);
+		void SetSendRate(const Object *obj, int32_t sendRate);
+	  void ResetSendRate(const Object *obj);
 
 		Object *FindObject(ObjectId id) const;
 
@@ -268,16 +293,16 @@ namespace SharedMode {
 
 		Object* FindSubObjectWithHash(ObjectRoot* Root, uint32_t subObjectHash) const;
 
-		ObjectRoot *CreateSceneObject(bool &alreadyPopulated, size_t words, const TypeRef &type, const CharType* header,
-		                          size_t headerLength, uint32_t scene, uint32_t id, ObjectFlags objectFlags);
+		ObjectRoot *CreateSceneObject(bool &alreadyPopulated, size_t words, const TypeRef &type, const PhotonCommon::CharType* header,
+		                          size_t headerLength, uint32_t scene, uint32_t id, ObjectOwnerModes ownerMode, int32_t requiredObjectsCount = 0);
 
-		ObjectRoot *CreateGlobalInstanceObject(bool &alreadyPopulated, size_t words, const TypeRef &type, const CharType* header,
-						  size_t headerLength, uint32_t scene, uint32_t id, ObjectFlags objectFlags);
+		ObjectRoot *CreateGlobalInstanceObject(bool &alreadyPopulated, size_t words, const TypeRef &type, const PhotonCommon::CharType* header,
+						  size_t headerLength, uint32_t scene, uint32_t id, ObjectOwnerModes ownerMode, int32_t requiredObjectsCount = 0);
 
-		ObjectRoot *CreateObject(size_t words, const TypeRef &type, const CharType* header,
-		                     size_t headerLength, uint32_t scene, ObjectFlags objectFlags);
+		ObjectRoot *CreateObject(size_t words, const TypeRef &type, const PhotonCommon::CharType* header,
+		                     size_t headerLength, uint32_t scene, ObjectOwnerModes ownerMode, int32_t requiredObjectsCount = 0);
 
-		ObjectChild *CreateSubObject(ObjectId parent, size_t words, const TypeRef &type, const CharType* header,
+		ObjectChild *CreateSubObject(ObjectId parent, size_t words, const TypeRef &type, const PhotonCommon::CharType* header,
 		                        size_t headerLength, uint32_t targetObjectHash, ObjectId id, ObjectSpecialFlags SpecialFlags);
 
 		bool HasSubObjects(const Object *Root);
@@ -287,6 +312,7 @@ namespace SharedMode {
 		bool AddSubObject(ObjectRoot *ParentObject, ObjectChild *SubObject);
 
 		friend class PhotonNotifyPlatform;
+		friend class ObjectRoot;
 	};
 }
 

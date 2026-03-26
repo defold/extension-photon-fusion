@@ -10,7 +10,7 @@ Scenes are identified by a monotonically increasing **sequence number** rather t
 Sequence: 0 (no scene) -> 1 (lobby) -> 2 (level_1) -> 3 (level_2)
 ```
 
-The sequence number is a `uint32_t` that starts at 0 (no scene loaded) and increments by 1 with each `ChangeScene()` call. It never resets during a session.
+The sequence number is a `uint32_t` that starts at 0 (no scene loaded) and increments with each `ChangeScene()` call. It never resets during a session.
 
 ## ChangeScene
 
@@ -18,9 +18,9 @@ Only the master client calls `ChangeScene()`:
 
 ```cpp
 void Client::ChangeScene(
-    uint32_t     index,    // Scene index (engine-specific, e.g., 0)
-    uint32_t     sequence, // Monotonically increasing sequence number
-    const CharType* data   // Scene data (typically the scene path as UTF-8)
+    uint32_t            index,    // Application-defined scene index
+    uint32_t            sequence, // Monotonically increasing sequence number
+    const CharType*     data      // Scene data (typically the scene path as UTF-8)
 );
 ```
 
@@ -30,14 +30,14 @@ void Client::ChangeScene(
 | `sequence` | Must be strictly greater than the previous sequence. Stale values are ignored. |
 | `data` | Opaque payload, typically a UTF-8 scene path (e.g., `"res://levels/arena.tscn"`). |
 
-`ChangeScene()` broadcasts an internal RPC (`RPC_InternalSceneChange`) to all clients. The master client does **not** receive its own `OnSceneChange` callback -- it must handle the local scene load separately.
+`ChangeScene()` broadcasts an internal RPC (`RPC_InternalSceneChange`) to all clients.
 
-## OnSceneChange Callback
+## OnSceneChange Broadcaster
 
-Non-master clients receive:
+All clients (including the master client) receive scene changes through:
 
 ```cpp
-std::function<void(uint32_t index, uint32_t sequence, Data& data)> OnSceneChange;
+Broadcaster<void(uint32_t index, uint32_t sequence, Data&)> OnSceneChange;
 ```
 
 | Parameter | Description |
@@ -50,10 +50,13 @@ The integration layer should:
 
 1. Compare `sequence` against the current sequence. Discard if not newer.
 2. Update the local scene sequence.
-3. Load the scene identified by `data`.
-4. Call the scene registration flow once the scene is ready.
+3. Pause state updates.
+4. Unload the old scene.
+5. Load the scene identified by `data`.
+6. Register scene objects.
+7. Resume state updates.
 
-## State Updates Pause/Resume
+## StateUpdatesPause / StateUpdatesResume
 
 During scene transitions, state updates should be paused to prevent the SDK from processing object updates for a scene that is being unloaded:
 
@@ -62,61 +65,107 @@ void Client::StateUpdatesPause();
 void Client::StateUpdatesResume();
 ```
 
-Typical flow:
+### Typical Transition Flow
 
-1. Master calls `ChangeScene()`.
-2. Integration calls `StateUpdatesPause()`.
-3. Unload old scene, destroy old scene objects.
-4. Load new scene.
-5. Register new scene objects (see below).
-6. Call `StateUpdatesResume()`.
+```cpp
+subs += fusionClient->OnSceneChange.Subscribe(
+    [](uint32_t index, uint32_t sequence, SharedMode::Data& data) {
+        // 1. Pause state updates
+        fusionClient->StateUpdatesPause();
 
-The SDK automatically resumes state updates on room join, so explicit calls are only needed for mid-session transitions.
+        // 2. Unload old scene, destroy old scene objects
+        destroy_current_scene_objects();
+        unload_current_scene();
+
+        // 3. Load new scene
+        auto scenePath = extract_path(data);
+        load_scene(scenePath);
+
+        // 4. Register new scene objects
+        register_scene_objects(sequence);
+
+        // 5. Resume
+        fusionClient->StateUpdatesResume();
+    }
+);
+```
+
+The SDK continues pumping the connection while paused (you still call `Service()` and the update loop). Only state replication is suspended.
 
 ## Scene Object Registration
 
-After the scene is loaded, each synchronized object in the scene must be registered with the SDK via [`CreateSceneObject()`](object-creation.md#scene-objects-createsceneobject).
+After the scene is loaded, each synchronized object in the scene must be registered with the SDK via `CreateSceneObject()`.
 
 ### Deterministic Object IDs
 
 All clients loading the same scene must produce the same object ID for the same entity. A common approach:
 
 ```cpp
-uint32_t objectId = hash(rootNodeName);
+uint32_t objectId = CRC64(rootNodeName, strlen(rootNodeName));
 ```
 
 Because scene files define fixed node names, the hash is deterministic across all clients.
 
 ### Registration Flow
 
-For each synchronized object in the loaded scene:
-
 ```cpp
-bool alreadyPopulated = false;
+for (auto* node : scene_synchronized_nodes) {
+    bool alreadyPopulated = false;
 
-ObjectRoot* obj = client->CreateSceneObject(
-    alreadyPopulated,
-    wordCount + Object::ExtraTailWords,
-    typeRef,
-    header, headerLength,
-    currentSceneSequence,
-    deterministicObjectId,
-    objectFlags
-);
+    ObjectRoot* obj = fusionClient->CreateSceneObject(
+        alreadyPopulated,
+        wordCount + Object::ExtraTailWords,
+        typeRef,
+        header, headerLength,
+        currentSceneSequence,
+        deterministicObjectId,
+        ownerMode
+    );
+
+    if (alreadyPopulated) {
+        // Network data exists: deserialize Words -> engine state
+        read_from_words(obj, node);
+    } else {
+        // First client: serialize engine defaults -> Words
+        write_to_words(obj, node);
+    }
+
+    obj->SetSendUpdates(true);
+    obj->SetHasValidData(true);
+}
 ```
 
-The `alreadyPopulated` output parameter drives the initial data direction:
+### The alreadyPopulated Bidirectional Flow
 
-| Value | Meaning | Action |
-|-------|---------|--------|
-| `false` | First client to register this object | Serialize engine defaults into `Words`, then `memcpy` to buffer |
-| `true` | Object already exists on the network | Deserialize `Words` buffer into engine state |
+```
+Master Client (first to register):
+  alreadyPopulated = false
+  Engine defaults --[write]--> Words buffer --[replicate]--> Network
 
-After registration:
+Late Joiner / Other Clients:
+  alreadyPopulated = true
+  Network --[replicate]--> Words buffer --[read]--> Engine state
+```
+
+This eliminates the need for separate "spawn data" exchange for scene objects. The same `CreateSceneObject` call handles both directions.
+
+## OnDestroyedMapActor
+
+When a scene object was destroyed before a late-joining client connects, that client needs to know which objects should not be instantiated:
 
 ```cpp
-obj->SetSendUpdates(true);
-obj->SetHasValidData(true);
+Broadcaster<void(uint32_t sceneIndex, ObjectId id)> OnDestroyedMapActor;
+```
+
+This fires for each pre-destroyed scene object during the join process. The integration layer should skip instantiation or immediately destroy the engine entity for the given `ObjectId`.
+
+```cpp
+subs += fusionClient->OnDestroyedMapActor.Subscribe(
+    [](uint32_t sceneIndex, SharedMode::ObjectId id) {
+        // This scene object was already destroyed before we joined
+        mark_as_pre_destroyed(sceneIndex, id);
+    }
+);
 ```
 
 ## Scene Object Lifetime
@@ -130,41 +179,46 @@ Each scene object is tagged with the `scene` parameter (the scene sequence at cr
 
 ## Global Instance Objects
 
-Objects that should persist across scene changes use `CreateGlobalInstanceObject()` with the `ObjectSettingsFlags::IsGlobalInstance` flag:
+Objects that should persist across scene changes use `CreateGlobalInstanceObject()`:
 
 ```cpp
-ObjectRoot* Client::CreateGlobalInstanceObject(
-    bool&           alreadyPopulated,
-    size_t          words,
-    const TypeRef&  type,
-    const CharType* header,
-    size_t          headerLength,
-    uint32_t        scene,
-    uint32_t        id,
-    ObjectFlags     objectFlags
+ObjectRoot* fusionClient->CreateGlobalInstanceObject(
+    alreadyPopulated,
+    words, type, header, headerLength,
+    scene, id, ownerMode
 );
 ```
 
-These objects survive `SceneChange` destruction and maintain their state across transitions.
+These objects survive `SceneChange` destruction and maintain their state across transitions. They follow the same `alreadyPopulated` pattern as scene objects.
 
 ## Late Joiners
 
-When a client joins mid-session, it receives the current scene sequence and path through the room state. The joining client:
+When a client joins mid-session, it receives the current scene through the room state. The joining client:
 
-1. Loads the scene identified by the current sequence.
-2. Calls `CreateSceneObject()` for each synchronized object.
-3. Gets `alreadyPopulated = true` for all objects (the master already populated them).
-4. Deserializes the existing network state into its local scene.
-
-This flow is identical to receiving an `OnSceneChange` -- there is no special join-time path.
+1. Receives `OnSceneChange` with the current scene data.
+2. Loads the scene identified by the current sequence.
+3. Receives `OnDestroyedMapActor` for any pre-destroyed scene objects.
+4. Calls `CreateSceneObject()` for each synchronized object.
+5. Gets `alreadyPopulated = true` for all objects (the master already populated them).
+6. Deserializes the existing network state into its local scene.
 
 ## Spawned Objects and Scenes
 
-[Spawned objects](object-creation.md#spawned-objects-createobject) also carry a `scene` parameter. This associates them with a specific scene sequence, so the SDK can clean them up during scene transitions. Objects spawned with `scene = 0` are not associated with any scene and persist until explicitly destroyed.
+[Dynamic objects](object-creation.md) also carry a `scene` parameter. This associates them with a specific scene sequence, so the SDK can clean them up during scene transitions. Objects created with `scene = 0` are not associated with any scene and persist until explicitly destroyed.
 
-## See Also
+## Common Mistakes
+
+| Mistake | Symptom |
+|---------|---------|
+| Not pausing state updates during transition | Stale state applied to wrong scene |
+| Non-deterministic scene object IDs | Objects mismatch between clients |
+| Forgetting to call `StateUpdatesResume()` | No replication after scene load |
+| Not handling `OnDestroyedMapActor` | Ghost objects for late joiners |
+| Reusing sequence numbers | Scene change silently ignored |
+
+## Related
 
 - [Object Creation](object-creation.md) -- `CreateSceneObject`, `CreateGlobalInstanceObject`
-- [Architecture](architecture.md) -- Frame loop and callback timing
+- [Frame Loop](frame-loop.md) -- `UpdateServiceOnly()` during loading
 - [RPCs](rpcs.md) -- Internal RPC used for scene change broadcast
-- [Client API Reference](../reference/client-api.md) -- Full method signatures
+- [Objects](objects.md) -- Object lifecycle and destruction modes

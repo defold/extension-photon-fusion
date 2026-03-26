@@ -1,15 +1,14 @@
 // Copyright Exit Games GmbH. All Rights Reserved.
 
-#ifndef SHAREDCLIENT_STRINGTYPE_H
-#define SHAREDCLIENT_STRINGTYPE_H
+#pragma once
 
 #include <charconv>
 #include <string>
 #include <type_traits>
 
-namespace SharedMode {
+namespace PhotonCommon {
 
-#define FUSION_STR(str) u8##str
+#define PHOTON_STR(str) u8##str
 
     using CharType = char8_t;
 #if defined(__cpp_lib_char8_t)
@@ -26,12 +25,13 @@ namespace SharedMode {
         CharType buffer[max_digits];
 
         char* begin = reinterpret_cast<char*>(buffer);
-        auto [ptr, ec] = std::to_chars(begin, begin + max_digits, value);
+        std::to_chars_result result = std::to_chars(begin, begin + max_digits, value);
 
-        return StringType(buffer, reinterpret_cast<CharType*>(ptr));
+        return StringType(buffer, reinterpret_cast<CharType*>(result.ptr));
     }
 
-    inline StringType to_string_type(bool value) {
+    template<typename T, std::enable_if_t<std::is_same_v<T, bool>, int> = 0>
+    StringType to_string_type(T value) {
         return value ? u8"True" : u8"False";
     }
 
@@ -44,4 +44,3 @@ namespace SharedMode {
     }
 }
 
-#endif //SHAREDCLIENT_STRINGTYPE_H

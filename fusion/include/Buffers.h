@@ -41,6 +41,8 @@ namespace SharedMode {
 	public:
 		explicit ReadBuffer(Data data);
 
+		[[nodiscard]] size_t Offset() const { return _offset; }
+
 		uint8_t Byte() { return Read<uint8_t>(); }
 		int8_t Sbyte() { return Read<int8_t>(); }
 		uint16_t UShort() { return Read<uint16_t>(); }
@@ -129,6 +131,8 @@ namespace SharedMode {
 
 		bool Empty() const { return _offset == 0; }
 
+		[[nodiscard]] size_t Offset() const { return _offset; }
+
 		void ObjectId(const ObjectId id) {
 			Player(id.Origin);
 			UIntVar(id.Counter);
@@ -162,7 +166,7 @@ namespace SharedMode {
 		void ShortVar(const int16_t value) { LongVar(value); }
 
 		void Float(const float value) { Write(value); }
-		void Double(const float value) { Write(value); }
+		void Double(const double value) { Write(value); }
 
 		void Span(const BufferT<uint8_t> &data);
 

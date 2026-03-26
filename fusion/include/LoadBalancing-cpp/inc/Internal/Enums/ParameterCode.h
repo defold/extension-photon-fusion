@@ -52,6 +52,7 @@ namespace ExitGames
 				static const nByte ROOM_LIST                          = 222;
 				static const nByte SECRET                             = 221;
 				static const nByte APP_VERSION                        = 220;
+				static const nByte INFO                               = 218;
 				static const nByte CLIENT_AUTHENTICATION_TYPE         = 217;
 				static const nByte CLIENT_AUTHENTICATION_PARAMETERS   = 216;
 				static const nByte JOIN_MODE                          = 215;

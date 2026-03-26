@@ -1,19 +1,19 @@
 # String Heap
 
-Strings cannot be stored directly in the [Words buffer](objects.md) because they are variable-length. Instead, Fusion provides `NetworkedStringHeap`, a per-root-object heap that stores string data and exposes fixed-size handles for use in the Words buffer.
+Strings cannot be stored directly in the [Words buffer](objects.md) because they are variable-length. Instead, Fusion provides `NetworkedStringHeap`, a per-object heap that stores string data and exposes fixed-size handles for use in the Words buffer.
 
 ## Overview
 
-Each `ObjectRoot` contains a `NetworkedStringHeap` initialized with 1024 bytes of storage:
+Each `Object` (both `ObjectRoot` and `ObjectChild`) contains a `NetworkedStringHeap` initialized with 1024 bytes of storage:
 
 ```cpp
-class ObjectRoot final : public Object {
+class Object {
     NetworkedStringHeap StringHeap{1024};
     // ...
 };
 ```
 
-Sub-objects (`ObjectChild`) do not have their own heap. String operations on a child delegate to its root's heap via `Root()->StringHeap`.
+Sub-objects (`ObjectChild`) delegate string operations to their root's heap via `Root()->StringHeap` when the sub-object's own heap is not sufficient. The root heap is the authoritative storage for the object hierarchy.
 
 ## StringHandle
 
@@ -28,7 +28,7 @@ struct StringHandle {
 
 | Field | Description |
 |-------|-------------|
-| `id` | Index into the heap's entry table. `0` is reserved as the invalid/empty handle. |
+| `id` | Index into the heap's entry table. `0` is the invalid/empty handle. |
 | `generation` | Incremented each time a slot is reused. Stale handles (wrong generation) are rejected. |
 
 In the Words buffer, a StringHandle occupies exactly 2 words at the property's offset:
@@ -43,17 +43,20 @@ words[offset + 1] = handle.generation
 ### Allocate
 
 ```cpp
-StringHandle Object::AddString(const CharType* str);
+StringHandle Object::AddString(const PhotonCommon::CharType* str);
 ```
 
-Allocates heap storage, copies the string data, and returns a handle. The handle's `id` and `generation` are written into the Words buffer by the integration layer.
+Allocates heap storage, copies the UTF-8 string data, and returns a handle. The handle's `id` and `generation` are then written into the Words buffer by the integration layer.
 
 For empty strings, do not call `AddString`. Instead, write `id = 0` directly. The SDK treats `id == 0` as an invalid handle that resolves to an empty string.
 
 ### Resolve
 
 ```cpp
-const CharType* Object::ResolveString(const StringHandle& handle, StringMessage& OutStatus);
+const PhotonCommon::CharType* Object::ResolveString(
+    const StringHandle& handle,
+    StringMessage& OutStatus
+);
 ```
 
 Looks up the string data for the given handle. Returns a pointer to the stored UTF-8 data and sets `OutStatus` to indicate success or failure.
@@ -68,7 +71,15 @@ Releases the heap storage associated with the handle. Returns an invalidated han
 
 **You must call `FreeString` before allocating a replacement string for the same property.** Failing to do so leaks heap space.
 
-### Helper
+### Validation
+
+```cpp
+bool Object::IsValidStringHandle(const StringHandle& handle);
+```
+
+Returns `true` if the handle points to a live entry with a matching generation.
+
+### Helpers
 
 ```cpp
 uint32_t Object::GetStringLength(const StringHandle& handle);
@@ -77,7 +88,7 @@ void Object::LogStringData(const StringHandle& handle);
 
 ## StringMessage Status Codes
 
-`ResolveString` returns a status code indicating the result:
+`ResolveString` reports a status code indicating the result:
 
 ```cpp
 enum class StringMessage {
@@ -91,7 +102,7 @@ enum class StringMessage {
 };
 ```
 
-The only status that returns valid string data is `Valid`. All other statuses should be treated as "no string available" and the property should resolve to an empty string.
+Only `Valid` returns usable string data. All other statuses should be treated as "no string available."
 
 ## Heap Internals
 
@@ -102,7 +113,7 @@ The heap maintains a table of `Entry` structs:
 ```cpp
 struct Entry {
     uint32_t offset;       // Byte offset into StringData buffer
-    uint32_t size;         // String length in bytes (excluding null terminator)
+    uint32_t size;         // String length in bytes
     uint32_t generation;   // Current generation for this slot
     bool     alive;        // Whether this slot is in use
 
@@ -111,9 +122,19 @@ struct Entry {
 };
 ```
 
+### Memory Layout
+
+```
+StringData buffer:
++--------+--------+-----------+--------+--------+
+| str_0  | str_1  |  (freed)  | str_3  | (free) |
++--------+--------+-----------+--------+--------+
+                   ^-- tracked by free_by_offset
+```
+
 ### Free List
 
-Freed slots are tracked in `free_ids` (sorted set, lowest index preferred for reuse). Freed heap segments are tracked in `free_by_offset` and coalesced to reduce fragmentation:
+Freed slots are tracked in `free_ids` (sorted set with lowest index preferred for reuse). Freed heap segments are tracked in `free_by_offset` and coalesced to reduce fragmentation:
 
 ```cpp
 struct FreeSeg {
@@ -124,30 +145,79 @@ struct FreeSeg {
 
 ### Compaction
 
-`compact_heap()` defragments the string data buffer by moving live entries to fill gaps left by freed strings. This is called internally when fragmentation reaches a threshold.
+`compact_heap()` defragments the string data buffer by moving live entries to fill gaps left by freed strings. Called internally when fragmentation reaches a threshold.
 
 ### Auto-Resize
 
-The heap starts at 1024 bytes and grows automatically when allocation cannot find a contiguous free segment. Growth is managed via `Resize()`. The constant `HEAP_BUFFER_PADDING` (256 bytes) provides a growth margin.
+The heap starts at 1024 bytes and grows automatically when allocation cannot find a contiguous free segment. The constant `HEAP_BUFFER_PADDING` (256 bytes) provides a growth margin.
 
 ### Replication
 
-The heap has its own replication channel separate from the Words buffer. The SDK tracks dirty entries via `IsDirty` and `ChangedTick`, and includes string heap data in state packets only when entries or data have changed. The packet flags indicate what changed:
+The heap has its own replication path separate from the Words buffer. The SDK tracks dirty entries via `IsDirty` and `ChangedTick`, and includes string heap data in state packets only when entries or data have changed:
 
 ```cpp
 constexpr uint8_t OBJECT_SENDFLAG_STRINGHEAP_ENTRIES_CHANGE = 2;
 constexpr uint8_t OBJECT_SENDFLAG_STRINGHEAP_DATA_CHANGE    = 4;
 ```
 
-The heap also maintains its own `Shadow` buffer for change detection, analogous to the Words buffer's shadow.
+The heap also maintains its own `Shadow` and `Ticks` buffers for change detection, analogous to the Words buffer's shadow.
 
 ## Spawn Data Exception
 
-During object creation (spawn data), the `NetworkedStringHeap` does not yet exist because the `ObjectRoot` has not been created. Strings in spawn data must be serialized as raw bytes in the header blob rather than as StringHandle references. Once the object is created and the heap is available, subsequent string updates use the normal handle mechanism.
+During object creation, strings in spawn data (the `header` blob) must be serialized as raw bytes rather than as StringHandle references. The heap is available immediately after object allocation, but any strings written to Words during the initial population (before `SetHasValidData(true)`) follow the normal handle flow.
+
+The distinction: the `Header` field is opaque bytes that the SDK passes through without interpreting. If your spawn data includes strings, encode them as length-prefixed UTF-8 in the header, not as StringHandles.
+
+## Sub-Object Delegation
+
+Sub-objects (`ObjectChild`) have their own `StringHeap` instance, but string operations called on an `ObjectChild` may delegate to the root's heap depending on the operation. The key behavior:
+
+- `AddString` / `FreeString` / `ResolveString` operate on the object's own heap
+- The root heap is the primary heap for replication purposes
+- All string handles within a hierarchy must track which object's heap they belong to
+
+## Handle Tracking for Leak Prevention
+
+Every `AddString` call must eventually be paired with a `FreeString` call, either when the property value changes or when the object is destroyed. Leaked handles waste heap space and can eventually exhaust the heap.
+
+A recommended pattern:
+
+```cpp
+// Track handles per property
+struct StringProperty {
+    StringHandle handle{0, 0};
+    int32_t wordOffset;
+
+    void Set(Object* obj, const PhotonCommon::CharType* str) {
+        // Free old handle
+        if (handle.id != 0) {
+            obj->FreeString(handle);
+        }
+
+        // Allocate new
+        if (str && str[0] != 0) {
+            handle = obj->AddString(str);
+        } else {
+            handle = {0, 0};
+        }
+
+        // Write to Words
+        obj->Words.Ptr[wordOffset]     = handle.id;
+        obj->Words.Ptr[wordOffset + 1] = handle.generation;
+    }
+
+    void Free(Object* obj) {
+        if (handle.id != 0) {
+            obj->FreeString(handle);
+            handle = {0, 0};
+        }
+    }
+};
+```
 
 ## Usage Pattern
 
-A typical string property update cycle:
+### Authority Side (Writing)
 
 ```cpp
 // Read the current handle from Words
@@ -155,20 +225,20 @@ StringHandle oldHandle;
 oldHandle.id         = words[offset];
 oldHandle.generation = words[offset + 1];
 
-// Free the old string (if it was valid)
+// Free the old string (if valid)
 if (oldHandle.id != 0) {
     obj->FreeString(oldHandle);
 }
 
 // Allocate new string
-StringHandle newHandle = obj->AddString(u8"Hello, world!");
+StringHandle newHandle = obj->AddString(PHOTON_STR("Hello, world!"));
 
 // Write new handle to Words
 words[offset]     = newHandle.id;
 words[offset + 1] = newHandle.generation;
 ```
 
-On the receiving side:
+### Remote Side (Reading)
 
 ```cpp
 // Read handle from Words
@@ -180,16 +250,15 @@ if (handle.id == 0) {
     // Empty string
 } else {
     StringMessage status;
-    const CharType* str = obj->ResolveString(handle, status);
+    const PhotonCommon::CharType* str = obj->ResolveString(handle, status);
     if (status == StringMessage::Valid && str) {
         // Use str (UTF-8 encoded)
     }
 }
 ```
 
-## See Also
+## Related
 
 - [Serialization](serialization.md) -- Words buffer layout and type mapping
-- [Objects](objects.md) -- Object hierarchy (root vs. child heap delegation)
+- [Objects](objects.md) -- Object hierarchy (root vs. child)
 - [Object Creation](object-creation.md) -- Spawn data exception
-- [StringHeap API Reference](../reference/stringheap-api.md) -- Complete API reference

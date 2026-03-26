@@ -1,14 +1,14 @@
-# Buffers API Reference
+# Buffers API
 
-Binary serialization primitives for reading and writing protocol data. All buffer classes live in the `SharedMode` namespace and are defined in `Buffers.h`.
+Binary serialization primitives for reading and writing network packets. All classes live in the `SharedMode` namespace.
 
-See also: [Serialization Concepts](../concepts/serialization.md)
+Header: `Buffers.h`
 
 ---
 
 ## ReadBuffer
 
-Sequential reader over a byte buffer. Advances an internal offset with each read operation. All fixed-width reads use `memcpy` for safe unaligned access.
+Sequential binary reader over a `Data` buffer.
 
 ### Constructor
 
@@ -16,348 +16,168 @@ Sequential reader over a byte buffer. Advances an internal offset with each read
 explicit ReadBuffer(Data data);
 ```
 
-Wraps an existing `Data` block for reading. The buffer does not take ownership of the underlying memory.
+Construct a reader over the given data. Reading starts at offset 0.
 
-### Fixed-Width Reads
+### Methods
 
-| Method | Return Type | Size | Description |
-|---|---|---|---|
-| `Byte()` | `uint8_t` | 1 | Read unsigned 8-bit integer |
-| `Sbyte()` | `int8_t` | 1 | Read signed 8-bit integer |
-| `UShort()` | `uint16_t` | 2 | Read unsigned 16-bit integer |
-| `Short()` | `int16_t` | 2 | Read signed 16-bit integer |
-| `UInt()` | `uint32_t` | 4 | Read unsigned 32-bit integer |
-| `Int()` | `int32_t` | 4 | Read signed 32-bit integer |
-| `ULong()` | `uint64_t` | 8 | Read unsigned 64-bit integer |
-| `Long()` | `int64_t` | 8 | Read signed 64-bit integer |
-| `Float()` | `float` | 4 | Read 32-bit IEEE 754 float |
-| `Double()` | `double` | 8 | Read 64-bit IEEE 754 double |
-
-### Variable-Length Reads
-
-Variable-length encoding uses LEB128 (unsigned) and ZigZag + LEB128 (signed) for compact representation of integers that are often small.
-
-| Method | Return Type | Description |
-|---|---|---|
-| `ULongVar()` | `uint64_t` | Read LEB128-encoded unsigned 64-bit integer |
-| `LongVar()` | `int64_t` | Read ZigZag-decoded signed 64-bit integer |
-| `UIntVar()` | `uint32_t` | Read varint, cast to unsigned 32-bit |
-| `IntVar()` | `int32_t` | Read varint, cast to signed 32-bit |
-| `UShortVar()` | `uint16_t` | Read varint, cast to unsigned 16-bit |
-| `ShortVar()` | `int16_t` | Read varint, cast to signed 16-bit |
-
-### Composite Reads
-
-#### `Bool`
-
-```cpp
-bool Bool();
-```
-
-Reads a single byte. Returns `true` if the byte equals `1`, `false` otherwise.
-
-#### `Flags`
-
-```cpp
-uint8_t Flags();
-```
-
-Reads a single byte as a bitfield of flags. Alias for `Byte()`.
-
-#### `Player`
-
-```cpp
-PlayerId Player();
-```
-
-Reads a `PlayerId` using varint encoding. Equivalent to `UIntVar()`.
-
-#### `ObjectId`
-
-```cpp
-ObjectId ObjectId();
-```
-
-Reads an `ObjectId` by reading `Origin` (as `Player()`) followed by `Counter` (as `UIntVar()`).
-
-#### `Versions`
-
-```cpp
-void Versions(int32_t &plugin_version, int32_t &client_version);
-```
-
-Reads plugin and client version numbers from the buffer. Used during object handshake.
-
-#### `TimeBase`
-
-```cpp
-double TimeBase();
-```
-
-Reads and stores a time base value using `ClockQuantizeDecode`. Subsequent `Time()` calls produce values relative to this base. Should be called once per packet before any `Time()` reads.
-
-#### `Time`
-
-```cpp
-double Time();
-```
-
-Reads a time value. If a time base has been set (via `TimeBase()`), reads a varint delta and adds it to the base. Otherwise reads an absolute quantized clock value.
-
-### Data Reads
-
-#### `DataAll`
-
-```cpp
-Data DataAll();
-```
-
-Returns a `Data` view of all remaining bytes in the buffer from the current offset to the end, without advancing the offset.
-
-#### `Data`
-
-```cpp
-void Data(Data &data);
-```
-
-Reads a length-prefixed byte block. Reads the length as a varint, then copies that many bytes into `data`.
-
-#### `Skip`
-
-```cpp
-void Skip(size_t length);
-```
-
-Advances the read offset by `length` bytes without returning any data.
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Offset` | `size_t Offset() const` | Returns the current read position in bytes. |
+| `Byte` | `uint8_t Byte()` | Read one unsigned byte. |
+| `Sbyte` | `int8_t Sbyte()` | Read one signed byte. |
+| `UShort` | `uint16_t UShort()` | Read a little-endian unsigned 16-bit integer. |
+| `Short` | `int16_t Short()` | Read a little-endian signed 16-bit integer. |
+| `UInt` | `uint32_t UInt()` | Read a little-endian unsigned 32-bit integer. |
+| `Int` | `int32_t Int()` | Read a little-endian signed 32-bit integer. |
+| `ULong` | `uint64_t ULong()` | Read a little-endian unsigned 64-bit integer. |
+| `Long` | `int64_t Long()` | Read a little-endian signed 64-bit integer. |
+| `Float` | `float Float()` | Read a 32-bit IEEE float. |
+| `Double` | `double Double()` | Read a 64-bit IEEE double. |
+| `ULongVar` | `uint64_t ULongVar()` | Read a variable-length encoded unsigned 64-bit integer. |
+| `LongVar` | `int64_t LongVar()` | Read a variable-length encoded signed 64-bit integer (ZigZag decoded). |
+| `UIntVar` | `uint32_t UIntVar()` | Read a variable-length encoded unsigned 32-bit integer. |
+| `IntVar` | `int32_t IntVar()` | Read a variable-length encoded signed 32-bit integer. |
+| `UShortVar` | `uint16_t UShortVar()` | Read a variable-length encoded unsigned 16-bit integer. |
+| `ShortVar` | `int16_t ShortVar()` | Read a variable-length encoded signed 16-bit integer. |
+| `Bool` | `bool Bool()` | Read a boolean (1 byte, true if `== 1`). |
+| `Flags` | `uint8_t Flags()` | Read a flags byte (alias for `Byte()`). |
+| `Player` | `PlayerId Player()` | Read a variable-length player ID. |
+| `ObjectId` | `ObjectId ObjectId()` | Read an `ObjectId` (player origin + variable counter). |
+| `Data` | `void Data(Data &data)` | Read a length-prefixed data block into the provided `Data` struct. |
+| `DataAll` | `Data DataAll()` | Return the remaining unread data as a `Data` value. |
+| `Skip` | `void Skip(size_t length)` | Advance the read position by `length` bytes without consuming data. |
+| `TimeBase` | `double TimeBase()` | Read a quantized time base value. Caches it for subsequent `Time()` calls. |
+| `Time` | `double Time()` | Read a quantized time offset relative to the last `TimeBase()`. |
+| `Versions` | `void Versions(int32_t &plugin_version, int32_t &client_version)` | Read plugin and client version pair. |
 
 ---
 
 ## WriteBuffer
 
-Sequential writer that appends data to a growable byte buffer. All fixed-width writes use `memcpy` for safe unaligned access.
+Sequential binary writer that manages its own growable `Data` buffer.
 
-### Fixed-Width Writes
+### Methods
 
-| Method | Parameter Type | Size | Description |
-|---|---|---|---|
-| `Byte(value)` | `uint8_t` | 1 | Write unsigned 8-bit integer |
-| `Sbyte(value)` | `int8_t` | 1 | Write signed 8-bit integer |
-| `UShort(value)` | `uint16_t` | 2 | Write unsigned 16-bit integer |
-| `Short(value)` | `int16_t` | 2 | Write signed 16-bit integer |
-| `UInt(value)` | `uint32_t` | 4 | Write unsigned 32-bit integer |
-| `Int(value)` | `int32_t` | 4 | Write signed 32-bit integer |
-| `ULong(value)` | `uint64_t` | 8 | Write unsigned 64-bit integer |
-| `Long(value)` | `int64_t` | 8 | Write signed 64-bit integer |
-| `Float(value)` | `float` | 4 | Write 32-bit IEEE 754 float |
-| `Double(value)` | `float` | 4 | Write as 64-bit (note: parameter type is `float` in the SDK) |
-
-### Variable-Length Writes
-
-| Method | Parameter Type | Description |
-|---|---|---|
-| `ULongVar(value)` | `uint64_t` | Write LEB128-encoded unsigned 64-bit integer |
-| `LongVar(value)` | `int64_t` | Write ZigZag-encoded signed 64-bit integer |
-| `UIntVar(value)` | `uint32_t` | Write varint from unsigned 32-bit |
-| `IntVar(value)` | `int32_t` | Write varint from signed 32-bit |
-| `UShortVar(value)` | `uint16_t` | Write varint from unsigned 16-bit |
-| `ShortVar(value)` | `int16_t` | Write varint from signed 16-bit |
-
-### Composite Writes
-
-#### `Bool`
-
-```cpp
-bool Bool(bool value);
-```
-
-Writes a boolean as a single byte (`1` for true, `0` for false). Returns the written value.
-
-#### `Flags`
-
-```cpp
-WriteFlags Flags();
-```
-
-Reserves one byte in the buffer and returns a `WriteFlags` handle. The byte is initialized to `0`. Use the returned handle to set flag bits after subsequent writes determine which flags apply. See [WriteFlags](#writeflags).
-
-#### `Player`
-
-```cpp
-void Player(PlayerId id);
-```
-
-Writes a `PlayerId` using varint encoding. Equivalent to `UIntVar(id)`.
-
-#### `ObjectId`
-
-```cpp
-void ObjectId(ObjectId id);
-```
-
-Writes an `ObjectId` by writing `Origin` (as `Player()`) followed by `Counter` (as `UIntVar()`).
-
-#### `Versions`
-
-```cpp
-void Versions(int32_t plugin_version, int32_t client_version, int32_t client_base_version);
-```
-
-Writes plugin, client, and client base version numbers. Used during object handshake.
-
-#### `TimeBase`
-
-```cpp
-void TimeBase(double time);
-```
-
-Writes and stores a time base value using `ClockQuantizeEncode`. Subsequent `Time()` calls will encode deltas relative to this base.
-
-#### `Time`
-
-```cpp
-void Time(double time);
-```
-
-Writes a time value. If a time base has been set (via `TimeBase()`), writes a varint delta from the base. Otherwise writes an absolute quantized clock value.
-
-### Data Writes
-
-#### `Span`
-
-```cpp
-void Span(const BufferT<uint8_t> &data);
-```
-
-Writes raw bytes from a typed buffer into the write buffer without a length prefix.
-
-#### `DataAll`
-
-```cpp
-void DataAll(const Data &data);
-```
-
-Writes all bytes from `data` into the write buffer without a length prefix.
-
-#### `Data`
-
-```cpp
-void Data(const Data &data);
-```
-
-Writes a length-prefixed byte block. Writes the length as a varint, then copies the bytes.
-
-### Buffer Management
-
-#### `Take`
-
-```cpp
-Data Take();
-```
-
-Finalizes the buffer: truncates the internal `Data` to the current write offset, resets the writer to empty, and returns the finalized `Data` block. Ownership of the memory transfers to the caller.
-
-**Precondition**: The underlying buffer must have been allocated with more capacity than the current offset (asserted).
-
-#### `Empty`
-
-```cpp
-bool Empty() const;
-```
-
-Returns `true` if nothing has been written to the buffer (offset is `0`).
-
-#### `Clear`
-
-```cpp
-void Clear() const;
-```
-
-Zeros out the entire underlying buffer memory without changing the offset.
-
-#### `GetResetPoint`
-
-```cpp
-ResetPoint GetResetPoint();
-```
-
-Captures the current write offset as a `ResetPoint`. See [ResetPoint](#resetpoint).
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Offset` | `size_t Offset() const` | Returns the current write position in bytes. |
+| `Empty` | `bool Empty() const` | Returns `true` if nothing has been written. |
+| `Take` | `Data Take()` | Detach and return the written data. Resets the writer. |
+| `Clear` | `void Clear() const` | Zero out the buffer contents. |
+| `GetResetPoint` | `ResetPoint GetResetPoint()` | Create a checkpoint at the current offset for rollback. |
+| `Byte` | `void Byte(uint8_t value)` | Write one unsigned byte. |
+| `Sbyte` | `void Sbyte(int8_t value)` | Write one signed byte. |
+| `UShort` | `void UShort(uint16_t value)` | Write a little-endian unsigned 16-bit integer. |
+| `Short` | `void Short(int16_t value)` | Write a little-endian signed 16-bit integer. |
+| `UInt` | `void UInt(uint32_t value)` | Write a little-endian unsigned 32-bit integer. |
+| `Int` | `void Int(int32_t value)` | Write a little-endian signed 32-bit integer. |
+| `ULong` | `void ULong(uint64_t value)` | Write a little-endian unsigned 64-bit integer. |
+| `Long` | `void Long(int64_t value)` | Write a little-endian signed 64-bit integer. |
+| `Float` | `void Float(float value)` | Write a 32-bit IEEE float. |
+| `Double` | `void Double(double value)` | Write a 64-bit IEEE double. |
+| `ULongVar` | `void ULongVar(uint64_t value)` | Write a variable-length encoded unsigned 64-bit integer. |
+| `LongVar` | `void LongVar(int64_t value)` | Write a variable-length encoded signed 64-bit integer (ZigZag encoded). |
+| `UIntVar` | `void UIntVar(uint32_t value)` | Write a variable-length encoded unsigned 32-bit integer. |
+| `IntVar` | `void IntVar(int32_t value)` | Write a variable-length encoded signed 32-bit integer. |
+| `UShortVar` | `void UShortVar(uint16_t value)` | Write a variable-length encoded unsigned 16-bit integer. |
+| `ShortVar` | `void ShortVar(int16_t value)` | Write a variable-length encoded signed 16-bit integer. |
+| `Bool` | `bool Bool(bool value)` | Write a boolean as one byte. Returns the value. |
+| `Flags` | `WriteFlags Flags()` | Reserve a flags byte and return a `WriteFlags` handle for deferred writing. |
+| `Player` | `void Player(PlayerId id)` | Write a variable-length player ID. |
+| `ObjectId` | `void ObjectId(ObjectId id)` | Write an `ObjectId` (player origin + variable counter). |
+| `Span` | `void Span(const BufferT<uint8_t> &data)` | Write a raw byte buffer. |
+| `Data` | `void Data(const Data &data)` | Write a length-prefixed data block. |
+| `DataAll` | `void DataAll(const Data &data)` | Write raw data without a length prefix. |
+| `Time` | `void Time(double time)` | Write a quantized time offset relative to the current time base. |
+| `TimeBase` | `void TimeBase(double time)` | Write a quantized time base value. Sets the base for subsequent `Time()` calls. |
+| `Versions` | `void Versions(int32_t plugin_version, int32_t client_version, int32_t client_base_version)` | Write plugin, client, and client base version triple. |
 
 ---
 
 ## WriteFlags
 
-A deferred flag-byte handle. Returned by `WriteBuffer::Flags()`, it allows you to set flag bits retroactively after writing the data that determines which flags are needed.
-
-### Fields
-
-| Field | Type | Description |
-|---|---|---|
-| `buffer` | `WriteBuffer*` | Pointer to the parent write buffer |
-| `offset` | `size_t` | Byte offset of the reserved flag byte |
-
-### Methods
-
-#### `AddFlags`
+Handle for a deferred flags byte in a `WriteBuffer`. Created by `WriteBuffer::Flags()`.
 
 ```cpp
-void AddFlags(uint8_t flag) const;
-```
+struct WriteFlags {
+    WriteBuffer* buffer;   // Owning buffer
+    size_t offset;         // Byte offset of the reserved flags byte
 
-ORs the given flag bits into the reserved byte at `offset`. Can be called multiple times to accumulate flags.
-
-### Usage Pattern
-
-```cpp
-WriteBuffer writer;
-auto flags = writer.Flags();       // Reserve flag byte (initialized to 0)
-
-if (hasData) {
-    flags.AddFlags(FRAG_FLAG_DATA); // Set bit retroactively
-    writer.Data(payload);
-}
-if (hasAcks) {
-    flags.AddFlags(FRAG_FLAG_ACKS);
-    writer.Data(ackData);
-}
+    void AddFlags(uint8_t flag) const;  // OR additional flag bits into the reserved byte
+};
 ```
 
 ---
 
 ## ResetPoint
 
-Captures a snapshot of a `WriteBuffer`'s write offset so that all data written after the snapshot can be discarded. Useful for speculative writes that may need to be rolled back.
-
-### Constructor
+Checkpoint for rolling back a `WriteBuffer` to a previous offset. Created by `WriteBuffer::GetResetPoint()`.
 
 ```cpp
-explicit ResetPoint(WriteBuffer *buffer);
+struct ResetPoint {
+    explicit ResetPoint(WriteBuffer *buffer);  // Capture the current offset
+    void Use();                                // Roll the buffer back to the captured offset
+};
 ```
 
-Stores the current offset of `buffer`.
+---
+
+## Data
+
+Raw byte buffer with ownership semantics.
+
+```cpp
+struct Data {
+    uint8_t *Ptr{nullptr};   // Pointer to byte data
+    size_t Length{0};         // Length in bytes
+};
+```
+
+### Constructors
+
+```cpp
+Data();                                                        // Default: null, length 0
+explicit Data(size_t length);                                  // Allocate a zeroed buffer of `length` bytes
+explicit Data(const PhotonCommon::CharType *ptr, size_t length);  // Copy from a CharType source
+explicit Data(uint8_t *ptr, size_t length);                    // Wrap existing memory (non-owning)
+```
 
 ### Methods
 
-#### `Use`
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Valid` | `bool Valid() const` | Returns `true` if `Ptr` is non-null and `Length > 0`. |
+| `Clone` | `Data Clone() const` | Allocate a new buffer and copy the contents. |
+| `Free` | `void Free()` | Deallocate the buffer and reset to null. |
+| `Resize` | `void Resize(size_t length)` | Grow the buffer, preserving existing data. |
+| `Slice` | `Data Slice(size_t offset) const` | Return a non-owning view starting at `offset`. |
+| `CloneSlice` | `Data CloneSlice(size_t offset) const` | Clone the data starting at `offset`. |
+| `operator bool` | `operator bool() const` | Equivalent to `Valid()`. |
+| `operator span<uint8_t>` | `operator std::span<uint8_t>() const` | Implicit conversion to a mutable span. |
+| `operator span<const uint8_t>` | `operator std::span<const uint8_t>() const` | Implicit conversion to a const span. |
+
+---
+
+## BufferT\<T\>
+
+Templated owning buffer for trivially-copyable types.
 
 ```cpp
-void Use();
+template<typename T>
+struct BufferT {
+    T *Ptr{nullptr};     // Pointer to element data
+    size_t Length{0};    // Number of elements
+};
 ```
 
-Resets the parent `WriteBuffer`'s offset back to the value captured at construction time. All data written after the `ResetPoint` was created is effectively discarded (the bytes remain in memory but will be overwritten by subsequent writes).
+### Methods
 
-### Usage Pattern
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `IsValid` | `bool IsValid()` | Returns `true` if `Ptr` is non-null and `Length > 0`. |
+| `Init` | `void Init(size_t length)` | Allocate a zeroed buffer of `length` elements. |
+| `Resize` | `void Resize(size_t length)` | Grow the buffer to `length` elements, preserving existing data. |
+| `operator T*` | `operator T*() const` | Implicit conversion to raw pointer. |
+| `operator void*` | `operator void*() const` | Implicit conversion to void pointer. |
 
-```cpp
-WriteBuffer writer;
-
-// ... write some base data ...
-
-auto reset = writer.GetResetPoint();
-
-writer.UInt(speculativeValue);
-writer.Data(speculativePayload);
-
-if (shouldDiscard) {
-    reset.Use();  // Roll back to before speculative writes
-}
-```
+Destructor deallocates the buffer via `delete[]`.

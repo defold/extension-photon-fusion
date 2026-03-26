@@ -6,47 +6,66 @@ Networked objects are the core data model in Fusion. Each object owns a fixed-si
 
 ```
 Object (abstract base)
+  |
   +-- ObjectRoot    (top-level networked entity)
+  |
   +-- ObjectChild   (sub-object attached to a root)
 ```
 
 All three classes live in the `SharedMode` namespace.
 
-### Object (Base)
+## Object (Base)
 
 The common base class. Holds the Words buffer, shadow state, type information, and SDK bookkeeping.
 
 ```cpp
 class Object {
 public:
-    ObjectId Id;
-    void* Engine;              // Opaque pointer for engine integration
-    ObjectType ObjectType;     // Base, Root, or Child
-    bool HasValidData;
-    Data Header;               // Spawn data (serialized at creation time)
-    TypeRef Type;              // Type hash + word count
+    ObjectId Id;                       // Globally unique identifier
+    void* Engine;                      // Opaque pointer for engine integration
+    ObjectType ObjectType;             // Base, Root, or Child
+    bool HasValidData;                 // Words buffer contains meaningful data
+    Data Header;                       // Immutable spawn data
+    TypeRef Type;                      // Type hash + word count
 
-    BufferT<Word> Shadow;      // Last-acked state (for dirty detection)
-    BufferT<Word> Words;       // Current replicated state
+    BufferT<Word> Shadow;              // Last-acked state (for dirty detection)
+    BufferT<Word> Words;               // Current replicated state
 
-    ObjectSpecialFlags SpecialFlags;
+    ObjectSpecialFlags SpecialFlags;   // IsRootTransform, etc.
+    uint8_t SendFlags;                 // Current packet flags
+
+    Tick RemoteTickSent;               // Last tick we sent
+    Tick RemoteTickAcked;              // Last tick remote acked
+
+    int32_t Status;                    // NEW / PENDING / CREATED
+
+    NetworkedStringHeap StringHeap;    // Per-object string pool (1024 bytes)
 
     static constexpr size_t ExtraTailWords = sizeof(ObjectTail) / 4;  // = 6
+    static constexpr double DynamicOwnerCooldownTime = 1.0 / 3;      // ~333ms
 
     void SetHasValidData(bool hasValidData);
     void SetSendUpdates(bool sendUpdates);
 
     virtual ObjectRoot* Root() = 0;
 
-    // String heap operations (delegate to Root()->StringHeap)
-    StringHandle AddString(const CharType* str);
-    const CharType* ResolveString(const StringHandle& handle, StringMessage& outStatus);
+    // String heap operations
+    StringHandle AddString(const PhotonCommon::CharType* str);
+    const PhotonCommon::CharType* ResolveString(const StringHandle& handle, StringMessage& outStatus);
     StringHandle FreeString(const StringHandle& handle);
+    bool IsValidStringHandle(const StringHandle& handle);
     uint32_t GetStringLength(const StringHandle& handle);
+
+    // Bandwidth tracking
+    uint32_t GetBytesSendLastTick() const;
+    uint32_t GetBytesReceivedLastTick() const;
+    uint32_t ConsumeBytesSendLastTick();        // Read and reset
+    uint32_t ConsumeBytesReceivedLastTick();     // Read and reset
+    void ResetReceivedBytes();
 };
 ```
 
-**Key fields:**
+### Key Fields
 
 | Field | Type | Purpose |
 |-------|------|---------|
@@ -57,66 +76,63 @@ public:
 | `Header` | `Data` | Immutable spawn data sent at creation time |
 | `Type` | `TypeRef` | Type hash and total word count (including tail) |
 | `HasValidData` | `bool` | Whether the Words buffer contains meaningful data |
+| `Status` | `int32_t` | Lifecycle status (NEW, PENDING, CREATED) |
+| `StringHeap` | `NetworkedStringHeap` | Per-object string pool |
 
-### ObjectRoot
+## ObjectRoot
 
-A top-level networked entity. Owns the [StringHeap](string-heap.md) and tracks ownership, timing, scene membership, and sub-objects.
+A top-level networked entity. Tracks ownership, timing, scene membership, and sub-objects.
 
 ```cpp
 class ObjectRoot final : public Object {
 public:
-    double Time;
-    PlayerId Owner;
-    ObjectFlags Flags;           // Settings + owner mode + interest mode
-    uint32_t Scene;              // Scene sequence this object belongs to
+    int LocalSendRate;                 // Per-object send rate multiplier
+    double Time;                       // Network-synchronized time
+    PlayerId Owner;                    // Current owner's PlayerId
+    ObjectOwnerModes OwnerMode;        // Transaction, Dynamic, MasterClient, etc.
+    uint32_t Scene;                    // Scene sequence this object belongs to
 
-    ObjectOwnerIntent OwnerIntent;
-    double OwnerIntentCooldown;
+    ObjectOwnerIntent OwnerIntent;     // WantOwner / DontWantOwner
+    double OwnerIntentCooldown;        // Time remaining before next transfer
 
-    Tick RemoteTickSent;
-    Tick RemoteTickAcked;
+    int32_t UpdatesReceived;           // Count of received state updates
+    bool SentThisFrame;                // Whether state was sent this frame
+    bool ObjectReady;                  // All required objects are present
 
-    int32_t Status;              // OBJECT_STATUS_NEW / PENDING / CREATED
-    int32_t UpdatesReceived;
-    int32_t UpdatesInFlight;
+    int32_t PluginVersion;             // Server plugin protocol version
+    int32_t ClientVersion;             // Client protocol version
+    int32_t ClientBaseVersion;         // Base version for delta encoding
 
-    int32_t PluginVersion;
-    int32_t ClientVersion;
-    int32_t ClientBaseVersion;
-
-    std::vector<ObjectId> SubObjects;
-    NetworkedStringHeap StringHeap;
+    std::vector<ObjectId> SubObjects;  // Attached child object IDs
 
     static bool Is(const Object* obj);
     static ObjectRoot* Cast(Object* obj);
-    ObjectRoot* Root() override;   // Returns this
+    static const ObjectRoot* Cast(const Object* obj);
+
+    bool IsRequired(ObjectId id) const;
+    int32_t RequiredObjectsCount() const;
+    ObjectId* RequiredObjects() const;
+
+    ObjectRoot* Root() override;       // Returns this
 };
 ```
 
-**Lifecycle status constants:**
+## ObjectChild
 
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `OBJECT_STATUS_NEW` | 0 | Just allocated, not yet sent to server |
-| `OBJECT_STATUS_PENDING` | 1 | Sent to server, waiting for ack |
-| `OBJECT_STATUS_CREATED` | 2 | Fully synchronized |
-
-### ObjectChild
-
-A sub-object attached to a root. Shares the root's StringHeap and authority, but has its own independent Words buffer and ObjectId.
+A sub-object attached to a root. Shares the root's authority but has its own independent Words buffer and ObjectId.
 
 ```cpp
 class ObjectChild final : public Object {
 public:
-    ObjectId Parent;             // Root object's ObjectId
-    uint32_t TargetObjectHash;   // Hash to match child type on remote
-    int32_t SubObjectStatus;
+    ObjectId Parent;                   // Root object's ObjectId
+    uint32_t TargetObjectHash;         // Hash to match child type on remote
 
     static ObjectId GetParent(const Object* obj);
     static bool Is(const Object* obj);
     static ObjectChild* Cast(Object* obj);
+    static const ObjectChild* Cast(const Object* obj);
 
-    ObjectRoot* Root() override;  // Returns parent root
+    ObjectRoot* Root() override;       // Navigates to parent root
 };
 ```
 
@@ -132,7 +148,19 @@ enum class ObjectType : uint8_t {
 };
 ```
 
-Use the static `Is()` and `Cast()` methods on `ObjectRoot` and `ObjectChild` for safe type checks rather than comparing `ObjectType` directly.
+Use the static `Is()` and `Cast()` methods on `ObjectRoot` and `ObjectChild` for safe type checks rather than comparing `ObjectType` directly:
+
+```cpp
+if (ObjectRoot::Is(obj)) {
+    ObjectRoot* root = ObjectRoot::Cast(obj);
+    // ...
+}
+
+if (ObjectChild::Is(obj)) {
+    ObjectChild* child = ObjectChild::Cast(obj);
+    ObjectId parentId = child->Parent;
+}
+```
 
 ## Words Buffer
 
@@ -145,10 +173,9 @@ The Words buffer is a flat array of `int32_t` values that holds all replicated p
 ```
 
 - Each property occupies a fixed number of words (e.g., `float` = 1, `Vector3` = 3, `StringHandle` = 2).
-- Array properties use the layout `[count: 1 word] [elements...]`.
 - The last 6 words are reserved for [ObjectTail](#objecttail) -- **never write to them**.
 
-The total buffer size is: `sum(property_words) + 6 tail words`.
+The total buffer size is: `sum(property_words) + ExtraTailWords`.
 
 ### Writing and Reading
 
@@ -156,15 +183,16 @@ The authority client writes property values into the Words buffer during the out
 
 ```cpp
 // Authority: write a float at word offset 0
-obj->Words.Ptr[0] = *reinterpret_cast<int32_t*>(&my_float);
+memcpy(&obj->Words.Ptr[0], &my_float, sizeof(float));
 
 // Remote: read it back
-float value = *reinterpret_cast<float*>(&obj->Words.Ptr[0]);
+float value;
+memcpy(&value, &obj->Words.Ptr[0], sizeof(float));
 ```
 
 ## Shadow Buffer
 
-The Shadow buffer is a parallel array with the same size as Words. After the SDK transmits an update, it copies Words into Shadow. On the next frame, the SDK compares Words against Shadow to detect which words changed and need retransmission.
+The Shadow buffer is a parallel array with the same size as Words. After the SDK transmits an update, it compares Words against Shadow to detect which words changed and need retransmission. After acknowledgment, Shadow is updated.
 
 The engine integration should not modify Shadow directly.
 
@@ -173,61 +201,51 @@ The engine integration should not modify Shadow directly.
 The last 6 words of every Words buffer are reserved for the SDK's internal use:
 
 ```cpp
+#pragma pack(push, 4)
 struct ObjectTail {
-    int32_t AOI_X;        // Area-of-interest X coordinate
-    int32_t AOI_Y;        // Area-of-interest Y coordinate
-    int32_t AOI_Z;        // Area-of-interest Z coordinate
-    int32_t AOI_SET;      // Whether AOI position has been set
-    int32_t Destroyed;    // Destruction flag
-    int32_t Dummy;        // Padding
+    int32_t RequiredObjectsCount;   // Number of required object dependencies
+    uint64_t InterestKey;           // AOI interest key (8 bytes, 2 words)
+    int32_t Destroyed;              // Destruction flag
+    int32_t SendRate;               // Server-controlled send rate
+    int32_t Dummy;                  // Reserved padding
 };
+#pragma pack(pop)
 
 static_assert(sizeof(ObjectTail) == 24);  // 6 words * 4 bytes
 ```
 
-**Critical**: Writing to the tail area corrupts SDK state. The `Destroyed` field at word offset `-2` from the end is especially dangerous -- overwriting it prevents the object from being properly cleaned up.
+**Critical**: Writing to the tail area corrupts SDK state. The `Destroyed` field is especially dangerous -- overwriting it prevents proper cleanup. The `InterestKey` is managed by the [AOI system](aoi.md) via `SetGlobalInterestKey()`, `SetAreaInterestKey()`, and `SetUserInterestKey()`.
 
-When computing buffer sizes, always add `Object::ExtraTailWords` (6) to the sum of your property word counts:
+When computing buffer sizes, always add `Object::ExtraTailWords` (6):
 
 ```cpp
 size_t total_words = sum_of_property_words + Object::ExtraTailWords;
 ```
 
-## ObjectFlags
+## Status Lifecycle
 
-Combines three configuration values into a packed `uint32_t`:
-
-```cpp
-struct ObjectFlags {
-    ObjectSettingsFlags SettingsFlags;
-    ObjectOwnerModes OwnerMode;
-    ObjectInterestModes InterestMode;
-};
+```
+NEW (0) --> PENDING (1) --> CREATED (2)
 ```
 
-See [Ownership](ownership.md) and [Area of Interest](aoi.md) for details on the individual fields.
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `OBJECT_STATUS_NEW` | 0 | Just allocated, not yet sent to server |
+| `OBJECT_STATUS_PENDING` | 1 | Sent to server, awaiting acknowledgment |
+| `OBJECT_STATUS_CREATED` | 2 | Fully synchronized and acknowledged |
 
-### ObjectSettingsFlags
+Objects transition from NEW to PENDING when first included in an outgoing packet, and from PENDING to CREATED when the server acknowledges receipt.
 
-```cpp
-enum class ObjectSettingsFlags : uint8_t {
-    None                    = 0,
-    OwnerLeavesOwnerToNone  = 1 << 0,  // Reset owner when current owner disconnects
-    IsGlobalInstance        = 1 << 1,  // Singleton object shared across scenes
-};
-```
+## Bandwidth Tracking
 
-### ObjectSpecialFlags
+Each object tracks bytes sent and received per frame:
 
 ```cpp
-enum class ObjectSpecialFlags : uint8_t {
-    None                        = 0,
-    IsRootTransform             = 1 << 1,
-    IgnoreRootTransformProperties = 1 << 2,
-};
+uint32_t sent = obj->ConsumeBytesSendLastTick();      // Read + reset
+uint32_t recv = obj->ConsumeBytesReceivedLastTick();   // Read + reset
 ```
 
-Used internally for physics replication optimization.
+These values are useful for network debugging, performance monitors, and bandwidth allocation. The "Consume" variants read the value and reset it to zero atomically.
 
 ## Object Lookup
 
@@ -235,26 +253,29 @@ The `Client` maintains two maps for object lookup:
 
 ```cpp
 // All objects (roots + children)
-std::unordered_map<ObjectId, Object*>& AllObjects();
+std::unordered_map<ObjectId, Object*>& client->AllObjects();
 
 // Root objects only
-std::unordered_map<ObjectId, ObjectRoot*>& AllRootObjects();
+std::unordered_map<ObjectId, ObjectRoot*>& client->AllRootObjects();
 
 // Single-object lookup
-Object* FindObject(ObjectId id) const;
-ObjectRoot* FindObjectRoot(ObjectId id) const;
-Object* FindSubObjectWithHash(ObjectRoot* root, uint32_t subObjectHash) const;
+Object* client->FindObject(ObjectId id);
+ObjectRoot* client->FindObjectRoot(ObjectId id);
+Object* client->FindSubObjectWithHash(ObjectRoot* root, uint32_t subObjectHash);
 ```
 
 ## Object Lifecycle Summary
 
-1. **Allocation** -- `Client` creates the object internally, assigns an `ObjectId`, allocates Words/Shadow buffers.
-2. **Population** -- Integration layer writes initial state (spawn data) into the Words buffer.
-3. **Activation** -- `SetHasValidData(true)` and `SetSendUpdates(true)` mark the object as ready for replication.
-4. **Replication** -- Each frame, the SDK detects changes (Words vs Shadow) and transmits dirty words to other clients.
-5. **Destruction** -- `DestroyObjectLocal()` marks the object for removal; `OnObjectDestroyed` fires on remote clients.
+```
+1. Allocate   -- Client creates object, assigns ObjectId, allocates Words/Shadow
+2. Populate   -- Integration writes initial state into Words buffer
+3. Activate   -- SetHasValidData(true) + SetSendUpdates(true)
+4. Replicate  -- Each frame: Words vs Shadow delta detection, dirty words sent
+5. Ready      -- OnObjectReady fires when object + required objects are all CREATED
+6. Destroy    -- DestroyObjectLocal() marks for removal; OnObjectDestroyed on remotes
+```
 
-See [Object Creation](object-creation.md) for the three creation paths (spawned, scene, sub-object).
+See [Object Creation](object-creation.md) for the three creation paths.
 
 ## Related
 
@@ -263,3 +284,4 @@ See [Object Creation](object-creation.md) for the three creation paths (spawned,
 - [Serialization](serialization.md) -- Words buffer layout and encoding
 - [String Heap](string-heap.md) -- NetworkedStringHeap for string replication
 - [Ownership](ownership.md) -- Owner modes and authority
+- [AOI](aoi.md) -- InterestKey in ObjectTail

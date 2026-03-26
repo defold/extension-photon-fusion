@@ -1,10 +1,10 @@
 # Sub-Objects
 
-Sub-objects (also called child objects) are dynamically created `ObjectChild` instances attached to an existing `ObjectRoot`. They have their own Words buffer, their own `ObjectId`, and participate in Fusion's replication system independently -- but they share authority with their parent and use the parent's `NetworkedStringHeap`.
+Sub-objects (child objects) are dynamically created `ObjectChild` instances attached to an existing `ObjectRoot`. They have their own Words buffer, their own `ObjectId`, and participate in Fusion's replication system independently. However, they share authority with their parent root and use the parent's `NetworkedStringHeap`.
 
-Use sub-objects when a root object needs to spawn additional networked entities at runtime (e.g., inventory items, equipped weapons, dynamic attachments).
+Use sub-objects when a root object needs to spawn additional networked entities at runtime (e.g., inventory items, equipped weapons, dynamic attachments, vehicle seats).
 
-See [Objects](../concepts/objects.md) for the class hierarchy and [Object Sync Patterns](object-sync-patterns.md) for Words buffer mechanics.
+See [Object Sync Patterns](object-sync-patterns.md) for Words buffer mechanics.
 
 ## Object Hierarchy
 
@@ -12,7 +12,7 @@ See [Objects](../concepts/objects.md) for the class hierarchy and [Object Sync P
 ObjectRoot (root object)
 ├── Words buffer (own)
 ├── Shadow buffer (own)
-├── NetworkedStringHeap (shared with children)
+├── NetworkedStringHeap (shared with all children)
 ├── SubObjects: vector<ObjectId>
 │
 ├── ObjectChild (sub-object #1)
@@ -26,7 +26,9 @@ ObjectRoot (root object)
     └── ...
 ```
 
-Both `ObjectRoot` and `ObjectChild` inherit from `Object`, so they share the same Words buffer API (`Words.Ptr`, `Words.Length`, `SetSendUpdates()`, `SetHasValidData()`, etc.). The key differences:
+Both `ObjectRoot` and `ObjectChild` inherit from `Object`, so they share the same Words buffer API (`Words.Ptr`, `Words.Length`, `SetSendUpdates()`, `SetHasValidData()`, etc.).
+
+**Key differences:**
 
 | Property | ObjectRoot | ObjectChild |
 |----------|-----------|-------------|
@@ -36,43 +38,65 @@ Both `ObjectRoot` and `ObjectChild` inherit from `Object`, so they share the sam
 | `Parent` | N/A | `ObjectId` of parent root |
 | `TargetObjectHash` | N/A | `uint32_t` for matching on remote side |
 | `Owner` | `PlayerId` | Inherits from root |
-| `Flags` | Own ObjectFlags | N/A |
+| `OwnerMode` | Own `ObjectOwnerModes` | N/A (inherits root authority) |
 | `ObjectType` | `ObjectType::Root` | `ObjectType::Child` |
+
+## ObjectChild Overview
+
+The `ObjectChild` class extends `Object` with parent-linking fields:
+
+```cpp
+class ObjectChild final : public Object {
+public:
+    ObjectId Parent{0, 0};         // Parent root's ObjectId
+    uint32_t TargetObjectHash{0};  // Secondary matching key
+
+    // Safe downcast: returns nullptr if obj is not a child
+    static ObjectChild* Cast(Object* obj);
+    static const ObjectChild* Cast(const Object* obj);
+
+    // Check if an Object is a child
+    static bool Is(const Object* obj);
+
+    // Get parent ID from any Object (returns {0,0} if not a child)
+    static ObjectId GetParent(const Object* obj);
+
+    // Returns the parent ObjectRoot*
+    ObjectRoot* Root() override;
+};
+```
 
 ## Authority-Side Creation Flow
 
-The authority client (object owner) creates sub-objects and adds them to the parent:
+Creating a sub-object on the authority side is a three-step process: create, write data, register.
 
-### Step 1: Create the Sub-Object
+### Step 1: CreateSubObject
 
 ```cpp
-SharedMode::ObjectChild* CreateSubObject(
+SharedMode::ObjectChild* CreateChildObject(
     SharedMode::Client* client,
     SharedMode::ObjectRoot* parent,
     size_t userWordCount,
     uint64_t typeHash,
-    uint32_t targetObjectHash,
-    const uint8_t* headerData,
-    size_t headerLength)
+    uint32_t targetObjectHash)
 {
-    constexpr size_t tailWords = sizeof(SharedMode::ObjectTail) / sizeof(int32_t);
-    size_t totalWords = userWordCount + tailWords;
+    size_t totalWords = userWordCount + SharedMode::Object::ExtraTailWords;
 
     SharedMode::TypeRef typeRef;
     typeRef.Hash = typeHash;
     typeRef.WordCount = static_cast<uint32_t>(totalWords);
 
-    // Get a new unique ObjectId for the child
+    // Get a unique ObjectId for the child
     SharedMode::ObjectId childId = client->GetNewObjectId();
 
     SharedMode::ObjectChild* child = client->CreateSubObject(
         parent->Id,           // parent ObjectId
-        totalWords,           // total word count including tail
+        totalWords,           // total words including tail
         typeRef,              // type reference (hash + word count)
-        reinterpret_cast<const SharedMode::CharType*>(headerData),
-        headerLength,
-        targetObjectHash,     // matching hash for remote identification
-        childId,              // unique child ID
+        nullptr,              // header data (spawn payload)
+        0,                    // header length
+        targetObjectHash,     // matching key for remote identification
+        childId,              // child's unique ObjectId
         SharedMode::ObjectSpecialFlags::None
     );
 
@@ -80,51 +104,67 @@ SharedMode::ObjectChild* CreateSubObject(
 }
 ```
 
-### Step 2: Add to Parent
+### Step 2: Write Spawn Data to Words
 
 ```cpp
-bool added = client->AddSubObject(parent, child);
-if (!added) {
-    // Handle error: parent may not exist or child already added
+void WriteChildSpawnData(SharedMode::ObjectChild* child,
+                         const int32_t* spawnWords,
+                         int userWordCount)
+{
+    if (!child || !child->Words.IsValid() || !spawnWords) return;
+
+    int usable = static_cast<int>(child->Words.Length)
+               - SharedMode::Object::ExtraTailWords;
+    int toCopy = (userWordCount < usable) ? userWordCount : usable;
+
+    memcpy(child->Words.Ptr, spawnWords, toCopy * sizeof(int32_t));
 }
 ```
 
-`AddSubObject()` registers the child with the parent's `SubObjects` list and triggers replication. On remote clients, `OnSubObjectCreated` fires.
-
-### Step 3: Copy Initial State to Words
+### Step 3: AddSubObject
 
 ```cpp
-if (child && child->Words.IsValid() && headerData) {
-    constexpr int tailWords = sizeof(SharedMode::ObjectTail) / sizeof(int32_t);
-    int usable = static_cast<int>(child->Words.Length) - tailWords;
-    int toCopy = std::min(static_cast<int>(headerLength / sizeof(int32_t)), usable);
-    if (toCopy > 0) {
-        memcpy(child->Words.Ptr, headerData, toCopy * sizeof(int32_t));
+bool RegisterChild(SharedMode::Client* client,
+                   SharedMode::ObjectRoot* parent,
+                   SharedMode::ObjectChild* child)
+{
+    bool added = client->AddSubObject(parent, child);
+    if (!added) {
+        // Parent may not exist or child was already added
+        return false;
     }
+
+    child->SetHasValidData(true);
+    return true;
 }
 ```
+
+`AddSubObject()` appends the child's `ObjectId` to the parent's `SubObjects` vector and triggers replication. On remote clients, `OnSubObjectCreated` fires.
+
+**Critical ordering:** `CreateSubObject` -> write spawn data -> `AddSubObject`. Calling `AddSubObject` before writing spawn data sends zeroed Words to remote clients. Forgetting `AddSubObject` means the child exists locally but is never replicated.
 
 ### Complete Authority-Side Example
 
 ```cpp
-// typeHash identifies the sub-object scene/prefab (e.g., "res://bullet.tscn".hash())
-// targetHash identifies the specific instance (e.g., node_name.hash())
-
 void SpawnSubObject(SharedMode::Client* client,
                     SharedMode::ObjectRoot* parent,
                     uint64_t typeHash,
                     uint32_t targetHash,
                     const int32_t* spawnWords,
-                    int userWordCount)
+                    int userWordCount,
+                    void* engineInstance)
 {
-    constexpr size_t tailWords = sizeof(SharedMode::ObjectTail) / sizeof(int32_t);
-    size_t totalWords = userWordCount + tailWords;
+    // 1. Compute total words
+    size_t totalWords = userWordCount + SharedMode::Object::ExtraTailWords;
 
     SharedMode::TypeRef typeRef{typeHash, static_cast<uint32_t>(totalWords)};
 
-    auto* child = client->CreateSubObject(
-        parent->Id, totalWords, typeRef,
-        reinterpret_cast<const SharedMode::CharType*>(spawnWords),
+    // 2. Create the child object
+    SharedMode::ObjectChild* child = client->CreateSubObject(
+        parent->Id,
+        totalWords,
+        typeRef,
+        reinterpret_cast<const PhotonCommon::CharType*>(spawnWords),
         userWordCount * sizeof(int32_t),
         targetHash,
         client->GetNewObjectId(),
@@ -133,21 +173,23 @@ void SpawnSubObject(SharedMode::Client* client,
 
     if (!child) return;
 
-    bool added = client->AddSubObject(parent, child);
-    if (!added) return;
-
-    // Copy spawn data to Words buffer
+    // 3. Copy spawn data to Words buffer
     if (child->Words.IsValid() && spawnWords) {
-        int usable = static_cast<int>(child->Words.Length) - tailWords;
-        int toCopy = std::min(userWordCount, usable);
+        int usable = static_cast<int>(child->Words.Length)
+                   - SharedMode::Object::ExtraTailWords;
+        int toCopy = (userWordCount < usable) ? userWordCount : usable;
         memcpy(child->Words.Ptr, spawnWords, toCopy * sizeof(int32_t));
     }
 
-    // Sub-objects inherit SendUpdates from parent -- no explicit set needed.
+    // 4. Register with parent
+    bool added = client->AddSubObject(parent, child);
+    if (!added) return;
+
+    // 5. Mark as ready
     child->SetHasValidData(true);
 
-    // Store engine pointer for later access
-    child->Engine = /* your engine-side node/actor */;
+    // 6. Store engine pointer
+    child->Engine = engineInstance;
 }
 ```
 
@@ -156,152 +198,308 @@ void SpawnSubObject(SharedMode::Client* client,
 When the authority creates a sub-object, Fusion fires `OnSubObjectCreated` on all other clients:
 
 ```cpp
-client->OnSubObjectCreated = [](SharedMode::ObjectChild* child) {
-    // 1. Find the parent's engine representation
-    SharedMode::ObjectId parentId = child->Parent;
-    // ... look up parent in your registry ...
+void SetupSubObjectCallback(SharedMode::Client* client,
+                            PhotonCommon::SubscriptionBag& subs)
+{
+    subs += client->OnSubObjectCreated.Subscribe(
+        [client](SharedMode::ObjectChild* child) {
+            // 1. Find the parent's engine representation
+            SharedMode::ObjectId parentId = child->Parent;
+            SharedMode::ObjectRoot* parentRoot = client->FindObjectRoot(parentId);
 
-    // 2. Match the type hash to a registered scene/prefab
-    uint64_t typeHash = child->Type.Hash;
-    // ... find matching scene ...
+            if (!parentRoot || !parentRoot->Engine) {
+                // Parent not ready yet -- queue for later processing
+                AddToPendingQueue(child);
+                return;
+            }
 
-    // 3. Instantiate the engine representation
-    // ... create node/actor ...
+            // 2. Match the type hash to a registered scene/prefab
+            uint64_t typeHash = child->Type.Hash;
+            const char* scenePath = FindSceneByTypeHash(typeHash);
+            if (!scenePath) {
+                printf("Unknown sub-object type: %llu\n",
+                       static_cast<unsigned long long>(typeHash));
+                return;
+            }
 
-    // 4. Deserialize spawn data from child's Words buffer
-    if (child->Words.IsValid()) {
-        constexpr int tailWords = sizeof(SharedMode::ObjectTail) / sizeof(int32_t);
-        int usable = static_cast<int>(child->Words.Length) - tailWords;
-        DeserializeProperties(child->Words.Ptr, usable);
-    }
+            // 3. Instantiate the engine representation
+            void* instance = InstantiateScene(scenePath);
 
-    // 5. Mark as having valid data
-    child->SetHasValidData(true);
+            // 4. Deserialize initial state from child's Words buffer
+            if (child->Words.IsValid()) {
+                int usable = static_cast<int>(child->Words.Length)
+                           - SharedMode::Object::ExtraTailWords;
+                DeserializeProperties(instance, child->Words.Ptr, usable);
+            }
 
-    // 6. Store engine pointer and register in your object registry
-    child->Engine = /* engine-side instance */;
-};
+            // 5. Mark as having valid data
+            child->SetHasValidData(true);
+
+            // 6. Store engine pointer and register
+            child->Engine = instance;
+            RegisterInRegistry(instance, child->Id);
+
+            // 7. Attach to parent in engine
+            AttachToParent(instance, parentRoot->Engine);
+        }
+    );
+}
 ```
-
-### Type Matching
-
-Both the authority and remote sides must agree on the type hash. The convention is to use a hash of the scene/prefab resource path:
-
-| Side | Computes | From |
-|------|----------|------|
-| Authority | `typeRef.Hash` | `scene_path.hash()` |
-| Remote | Compare `child->Type.Hash` | Against registered scene hashes |
-
-The Godot integration registers sub-object scenes via `register_sub_object_scene(path)` and stores `path.hash()` as the type hash. The Unreal integration uses a similar spawnable type registration.
-
-### TargetObjectHash
-
-`TargetObjectHash` is a secondary identifier for matching within a type. For example, if a player can equip multiple items of the same type, `TargetObjectHash` distinguishes between them (e.g., `node_name.hash()`).
-
-The remote side can access it via `child->TargetObjectHash` to restore the correct instance identity.
 
 ## Pending Queue Pattern
 
 Sub-objects may arrive before their parent is ready on the remote side. This happens when:
-- The parent object creation callback hasn't been processed yet
-- The parent's engine representation hasn't finished loading
-- The parent is a scene object and the scene hasn't loaded yet
+- The parent object creation callback has not been processed yet
+- The parent's engine representation has not finished loading
+- The parent is a scene object and the scene has not loaded yet
 
-The solution is a **pending queue**:
+The solution is a **pending queue** that retries each frame:
 
 ```cpp
-// Storage
-std::vector<SharedMode::ObjectChild*> pendingSubObjects;
+class SubObjectPendingQueue {
+    std::vector<SharedMode::ObjectChild*> pending;
 
-// In OnSubObjectCreated: if parent isn't ready, queue it
-client->OnSubObjectCreated = [&](SharedMode::ObjectChild* child) {
-    SharedMode::ObjectId parentId = child->Parent;
-
-    // Try to find parent
-    auto* parentEngine = FindEngineObject(parentId);
-    if (!parentEngine) {
-        pendingSubObjects.push_back(child);
-        return;
+public:
+    void Add(SharedMode::ObjectChild* child) {
+        pending.push_back(child);
     }
 
-    // Process normally
-    HandleSubObjectCreated(child, parentEngine);
-};
+    // Call each frame to process pending sub-objects.
+    // Iterates backward so removal does not shift unprocessed elements.
+    void ProcessPending(SharedMode::Client* client) {
+        for (int i = static_cast<int>(pending.size()) - 1; i >= 0; i--) {
+            SharedMode::ObjectChild* child = pending[i];
+            SharedMode::ObjectId parentId = child->Parent;
 
-// Each frame: retry pending sub-objects
-void ProcessPendingSubObjects() {
-    for (int i = static_cast<int>(pendingSubObjects.size()) - 1; i >= 0; i--) {
-        SharedMode::ObjectChild* child = pendingSubObjects[i];
-        SharedMode::ObjectId parentId = child->Parent;
+            SharedMode::ObjectRoot* parentRoot = client->FindObjectRoot(parentId);
+            if (!parentRoot || !parentRoot->Engine) {
+                continue; // Parent still not ready, keep in queue
+            }
 
-        auto* parentEngine = FindEngineObject(parentId);
-        if (parentEngine) {
-            HandleSubObjectCreated(child, parentEngine);
-            pendingSubObjects.erase(pendingSubObjects.begin() + i);
+            // Parent is ready -- process the sub-object
+            HandleSubObjectCreated(client, child, parentRoot);
+
+            // Remove from pending list
+            pending.erase(pending.begin() + i);
         }
     }
+
+    // Call when a parent is destroyed to clean up orphaned pending children
+    void RemoveForParent(SharedMode::ObjectId parentId) {
+        for (int i = static_cast<int>(pending.size()) - 1; i >= 0; i--) {
+            if (pending[i]->Parent == parentId) {
+                pending.erase(pending.begin() + i);
+            }
+        }
+    }
+
+    void Clear() {
+        pending.clear();
+    }
+};
+
+static SubObjectPendingQueue g_pendingSubObjects;
+```
+
+Integrate with the frame loop:
+
+```cpp
+void FrameUpdate(double dt) {
+    // ... Service, sync_outbound, UpdateFrameEnd, UpdateFrameBegin ...
+
+    // After UpdateFrameBegin (callbacks have fired), process pending
+    g_pendingSubObjects.ProcessPending(g_client);
+
+    // ... sync_inbound ...
 }
 ```
 
-The Godot integration maintains `pending_sub_objects` in `FusionClient` and processes them each frame in `_process_pending_sub_objects()`.
-
-**Clean up on parent destruction:** When a parent is destroyed, remove any pending sub-objects that reference it:
+Clean up on parent destruction:
 
 ```cpp
-client->OnObjectDestroyed = [&](const SharedMode::ObjectRoot* obj,
-                                SharedMode::DestroyModes mode) {
-    // Remove pending sub-objects for this parent
-    for (int i = static_cast<int>(pendingSubObjects.size()) - 1; i >= 0; i--) {
-        SharedMode::ObjectId parentId = pendingSubObjects[i]->Parent;
-        if (parentId == obj->Id) {
-            pendingSubObjects.erase(pendingSubObjects.begin() + i);
-        }
+subs += client->OnObjectDestroyed.Subscribe(
+    [](const SharedMode::ObjectRoot* obj, SharedMode::DestroyModes mode) {
+        g_pendingSubObjects.RemoveForParent(obj->Id);
+        // ... other cleanup ...
     }
-};
+);
 ```
 
 ## Dual Handle Pattern
 
-In the Godot integration, each `FusionSynchronizer` maintains two handles:
+When building a synchronizer that works with both root objects and sub-objects, maintain two handles:
 
-| Handle | Type | Used For |
-|--------|------|----------|
-| `fusion_object` | Always `ObjectRoot*` | Authority checks (`IsOwner()`, `GetOwner()`) |
-| `fusion_data_object` | `Object*` (root or child) | Words buffer access (`Words.Ptr`) |
+| Handle | Type | Purpose |
+|--------|------|---------|
+| `rootHandle` | `ObjectRoot*` | Authority checks: `IsOwner()`, `GetOwner()`, `CanModify()` |
+| `dataHandle` | `Object*` | Words buffer access: `Words.Ptr`, `SetSendUpdates()` |
 
-For root objects, both handles point to the same `ObjectRoot*`. For sub-objects:
+For root objects, both point to the same `ObjectRoot*`. For sub-objects, the root handle points to the parent, and the data handle points to the child:
 
 ```cpp
-// Root object binding:
-void BindRootObject(ObjectRoot* root) {
-    fusion_object = root;       // Root for authority
-    fusion_data_object = root;  // Same object for Words
-}
+class MySynchronizer {
+    SharedMode::ObjectRoot* rootHandle = nullptr;  // Always a root
+    SharedMode::Object* dataHandle = nullptr;       // Root or child
 
-// Sub-object binding:
-void BindChildObject(ObjectChild* child) {
-    fusion_object = child->Root();  // Root for authority checks
-    fusion_data_object = child;     // Child for Words buffer
-}
+public:
+    // Bind to a root object
+    void BindRoot(SharedMode::ObjectRoot* root) {
+        rootHandle = root;
+        dataHandle = root;  // Same object
+    }
+
+    // Bind to a sub-object
+    void BindChild(SharedMode::ObjectChild* child) {
+        rootHandle = child->Root();  // Navigate to parent root
+        dataHandle = child;          // Child for Words buffer access
+    }
+
+    bool HasAuthority(SharedMode::Client* client) const {
+        // Always check authority against the root
+        return client->IsOwner(rootHandle);
+    }
+
+    void SyncOutbound(SharedMode::Client* client) {
+        if (!HasAuthority(client)) return;
+
+        // Write to the data handle's Words buffer
+        // (works identically for root and child)
+        int32_t* words = dataHandle->Words.Ptr;
+        int offset = 0;
+        // ... write properties at offset ...
+    }
+
+    void SyncInbound(SharedMode::Client* client) {
+        if (HasAuthority(client)) return;
+
+        const int32_t* words = dataHandle->Words.Ptr;
+        int offset = 0;
+        // ... read properties from offset ...
+    }
+};
 ```
 
-This allows `sync_outbound()` and `sync_inbound()` to work identically for both root and sub-objects -- they always cast `fusion_data_object` to `Object*` for Words access:
+This pattern allows the sync loop to be completely agnostic about whether it is operating on a root object or a sub-object.
+
+## Required Objects
+
+A root object can declare a number of required sub-objects. The object is not considered "ready" until all required sub-objects have been created. This is useful for compound objects where the root and its children must all exist before gameplay begins.
+
+### Creating with Required Objects
 
 ```cpp
-void SyncOutbound() {
-    SharedMode::Object* obj = static_cast<SharedMode::Object*>(fusion_data_object);
-    // Write to obj->Words -- works for both root and child
+// Create a root that requires 2 sub-objects
+int32_t requiredCount = 2;
+
+SharedMode::ObjectRoot* root = client->CreateObject(
+    totalWords, typeRef, header, headerLen,
+    sceneIndex, ownerMode,
+    requiredCount  // last parameter
+);
+```
+
+### Querying Required Objects
+
+```cpp
+// How many required sub-objects are declared?
+int32_t count = root->RequiredObjectsCount();
+
+// Get pointer to array of required ObjectIds
+SharedMode::ObjectId* reqIds = root->RequiredObjects();
+for (int32_t i = 0; i < count; i++) {
+    printf("Required: origin=%u counter=%u\n",
+           reqIds[i].Origin, reqIds[i].Counter);
 }
 
-bool HasAuthority() {
-    // Always check against the root object
-    return client->IsOwner(static_cast<SharedMode::Object*>(fusion_object));
+// Check if a specific ObjectId is required
+bool isReq = root->IsRequired(someId);
+```
+
+The required object IDs are stored in the Words buffer immediately after the ObjectTail.
+
+## Destruction
+
+### Destroying a Sub-Object Locally
+
+```cpp
+// Authority side: destroy a specific sub-object
+bool success = client->DestroySubObjectLocal(child);
+```
+
+This removes the child from the parent's `SubObjects` list and fires `OnSubObjectDestroyed` on all clients.
+
+### Cascade on Root Destroy
+
+When a root object is destroyed (via `DestroyObjectLocal` or remotely), all its sub-objects are automatically destroyed. The `OnSubObjectDestroyed` callback fires for each child.
+
+### Handling Destruction Callbacks
+
+```cpp
+subs += client->OnSubObjectDestroyed.Subscribe(
+    [](SharedMode::ObjectChild* child, SharedMode::DestroyModes mode) {
+        // 1. Free any string handles from the root's heap
+        FreeChildStringHandles(child);
+
+        // 2. Clean up engine representation
+        if (child->Engine) {
+            DestroyEngineObject(child->Engine);
+            child->Engine = nullptr;
+        }
+
+        // 3. Unregister from bidirectional registry
+        UnregisterByFusionId(child->Id);
+    }
+);
+```
+
+## String Heap Delegation
+
+Sub-objects do **not** have their own `NetworkedStringHeap`. All string operations on a child delegate to the root's heap:
+
+```cpp
+// These work identically whether obj is ObjectRoot or ObjectChild.
+// The Object base class routes through Root() internally.
+SharedMode::StringHandle handle = childObj->AddString(
+    reinterpret_cast<const PhotonCommon::CharType*>("hello")
+);
+
+SharedMode::StringMessage status;
+const PhotonCommon::CharType* str = childObj->ResolveString(handle, status);
+
+childObj->FreeString(handle);
+```
+
+**Implications:**
+- All children share the root's string heap capacity
+- String handles are root-scoped, not child-scoped
+- **Destroying a child does NOT automatically free its strings from the root heap**
+
+**Rule:** When destroying a sub-object, explicitly free all its string handles from the root's heap first. Track which handles belong to which child to avoid leaks.
+
+```cpp
+void FreeChildStringHandles(SharedMode::ObjectChild* child) {
+    int32_t* words = child->Words.Ptr;
+    int usable = static_cast<int>(child->Words.Length)
+               - SharedMode::Object::ExtraTailWords;
+
+    // Iterate through known string property offsets
+    for (int stringOffset : GetStringPropertyOffsets(child->Type.Hash)) {
+        if (stringOffset + 1 >= usable) break;
+
+        SharedMode::StringHandle handle;
+        handle.id = static_cast<uint32_t>(words[stringOffset]);
+        handle.generation = static_cast<uint32_t>(words[stringOffset + 1]);
+
+        if (handle.id != 0) {
+            child->FreeString(handle);  // Delegates to root heap
+        }
+    }
 }
 ```
 
 ## Finding Sub-Objects
 
-The SDK provides methods to query sub-objects:
+The SDK provides several methods to query sub-objects:
 
 ```cpp
 // Check if a root has any sub-objects
@@ -310,60 +508,26 @@ bool hasSubs = client->HasSubObjects(rootObj);
 // Get all sub-object IDs for a root
 const std::vector<SharedMode::ObjectId>& subIds = client->GetSubObject(rootObj);
 
-// Find a specific sub-object by hash
+// Find a specific sub-object by TargetObjectHash
 SharedMode::Object* found = client->FindSubObjectWithHash(rootObj, targetHash);
+
+// Find any object (root or child) by ObjectId
+SharedMode::Object* obj = client->FindObject(objectId);
 ```
 
-You can also iterate via the root's `SubObjects` vector:
+Iterate through a root's children:
 
 ```cpp
 SharedMode::ObjectRoot* root = /* ... */;
 for (const auto& subId : root->SubObjects) {
     SharedMode::Object* sub = client->FindObject(subId);
     if (sub) {
-        // Process sub-object
-    }
-}
-```
-
-## String Operations on Sub-Objects
-
-Sub-objects share their root's `NetworkedStringHeap`. The `AddString()`, `ResolveString()`, and `FreeString()` methods on `Object` automatically delegate to `Root()->StringHeap`:
-
-```cpp
-// This works the same whether obj is ObjectRoot or ObjectChild
-SharedMode::StringHandle handle = obj->AddString(
-    reinterpret_cast<const SharedMode::CharType*>("hello")
-);
-
-SharedMode::StringMessage status;
-const SharedMode::CharType* str = obj->ResolveString(handle, status);
-
-obj->FreeString(handle);
-```
-
-There is no need to manually navigate to the root for string operations.
-
-## Cleanup
-
-When destroying sub-objects, clean up both the Fusion state and your registry:
-
-```cpp
-// On object destruction callback
-client->OnObjectDestroyed = [&](const SharedMode::ObjectRoot* obj,
-                                SharedMode::DestroyModes mode) {
-    // Clean up sub-object tracking
-    if (client->HasSubObjects(obj)) {
-        const auto& subIds = client->GetSubObject(obj);
-        for (const auto& subId : subIds) {
-            // Remove from your registry
-            registry.UnregisterByFusionId(subId.Origin, subId.Counter);
+        SharedMode::ObjectChild* child = SharedMode::ObjectChild::Cast(sub);
+        if (child) {
+            // Process child...
         }
     }
-
-    // Remove root from registry
-    registry.UnregisterByFusionId(obj->Id.Origin, obj->Id.Counter);
-};
+}
 ```
 
 ## SDK API Reference
@@ -374,18 +538,18 @@ client->OnObjectDestroyed = [&](const SharedMode::ObjectRoot* obj,
 |--------|-----------|
 | `CreateSubObject` | `ObjectChild* CreateSubObject(ObjectId parent, size_t words, const TypeRef& type, const CharType* header, size_t headerLength, uint32_t targetObjectHash, ObjectId id, ObjectSpecialFlags flags)` |
 | `AddSubObject` | `bool AddSubObject(ObjectRoot* parent, ObjectChild* child)` |
+| `DestroySubObjectLocal` | `bool DestroySubObjectLocal(ObjectChild* obj)` |
 | `HasSubObjects` | `bool HasSubObjects(const Object* root)` |
-| `GetSubObject` | `const std::vector<ObjectId>& GetSubObject(const Object* root)` |
-| `FindSubObjectWithHash` | `Object* FindSubObjectWithHash(ObjectRoot* root, uint32_t subObjectHash)` |
+| `GetSubObject` | `const vector<ObjectId>& GetSubObject(const Object* root)` |
+| `FindSubObjectWithHash` | `Object* FindSubObjectWithHash(ObjectRoot* root, uint32_t hash)` |
 | `GetNewObjectId` | `ObjectId GetNewObjectId()` |
 
 ### ObjectChild Members
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `Parent` | `ObjectId` | Parent root's ID |
-| `TargetObjectHash` | `uint32_t` | Secondary matching key |
-| `SubObjectStatus` | `int32_t` | Internal status |
+| `Parent` | `ObjectId` | Parent root's ObjectId |
+| `TargetObjectHash` | `uint32_t` | Secondary matching key for remote identification |
 
 ### ObjectChild Static Methods
 
@@ -399,5 +563,4 @@ client->OnObjectDestroyed = [&](const SharedMode::ObjectRoot* obj,
 
 - [Engine Binding](engine-binding.md) -- Connecting SDK objects to engine representations
 - [Object Sync Patterns](object-sync-patterns.md) -- Words buffer mechanics
-- [Objects](../concepts/objects.md) -- Full object hierarchy conceptual model
-- [Object Creation](../concepts/object-creation.md) -- The three creation paths
+- [Pitfalls](../pitfalls.md) -- Sub-object-specific pitfalls (string heap delegation, two-step creation)

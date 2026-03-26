@@ -1,7 +1,6 @@
 // Copyright Exit Games GmbH. All Rights Reserved.
 
-#ifndef SHAREDCLIENT_LOGOUTPUT_H
-#define SHAREDCLIENT_LOGOUTPUT_H
+#pragma once
 
 #include "StringType.h"
 
@@ -9,7 +8,7 @@
 // e.g logs could be output to a log file, or debug messages to the screen.
 // The log system supports having multiple log outputs active at once.
 
-namespace SharedMode::Logging {
+namespace PhotonCommon {
 	class LogOutput {
 	public:
 		virtual ~LogOutput() = default;
@@ -20,6 +19,3 @@ namespace SharedMode::Logging {
 		virtual void LogError(const CharType* message) = 0;
 	};
 }
-
-
-#endif // SHAREDCLIENT_LOGOUTPUT_H

@@ -22,6 +22,8 @@ namespace SharedMode {
 	constexpr PlayerId ObjectOwnerPlayerId = 0xFFFFFFFF - 2;  // UINT32_MAX - 2
 
 	struct ObjectId {
+		static constexpr size_t WordSize = 2;
+
 		PlayerId Origin{0};
 		uint32_t Counter{0};
 
@@ -48,10 +50,14 @@ namespace SharedMode {
 			return Origin != other.Origin || Counter != other.Counter;
 		}
 
-		operator StringType() const;
+		operator PhotonCommon::StringType() const;
 
 		operator uint64_t() const;
 	};
+
+	inline PhotonCommon::StringType to_string_type(ObjectId id) {
+	    return id;
+	}
 }
 
 #endif

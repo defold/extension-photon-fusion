@@ -1,204 +1,62 @@
-# Notify Protocol API Reference
+# Notify API
 
-Low-level network transport layer for the Fusion SDK. Handles packet fragmentation, reassembly, sequencing, acknowledgments, and reliable/unreliable delivery. All types live in the `SharedMode::Notify` namespace and are defined in `Notify.h`.
+Custom reliable/unreliable transport layer with fragmentation, acknowledgment tracking, and delivery callbacks. All types live in the `SharedMode::Notify` namespace.
 
----
-
-## Overview
-
-The Notify layer sits between the Photon transport (UDP) and the Fusion replication system. It provides two channels per connection:
-
-- **Game** (channel 1, unreliable) -- State updates that can tolerate packet loss.
-- **Streaming** (channel 2, reliable) -- Data that must arrive in order, such as string heap updates.
-
-Large messages are fragmented into MTU-sized pieces, each tagged with a fragment group and index. The receiver reassembles fragments and delivers complete groups to the upper layer. Acknowledgments use a sliding-window bitmask to efficiently report received/lost sequences.
+Header: `Notify.h`
 
 ---
 
-## Constants
+## Connection
 
-| Constant | Value | Description |
-|---|---|---|
-| `RECV_RESULT_NONE` | `0` | Receive returned no actionable result. |
-| `RECV_RESULT_DISCONNECT` | `2` | Receive detected a disconnect condition. |
-| `DEFAULT_HEADERS` | `144` | Overhead bytes reserved for protocol headers (`40 + 8 + 96`). |
-| `MAX_MTU_BYTES_TOTAL` | `1280` | Maximum total packet size in bytes. |
-| `MAX_MTU_BYTES_PAYLOAD` | `1136` | Maximum payload bytes per packet (`1280 - 144`). |
-| `PACKET_MTU_BYTES` | `1128` | Usable payload after 8-byte alignment (`1136 / 8 * 8`). |
+Manages two channels (Game and Streaming), handles fragmentation, acknowledgments, and delivery notifications.
 
-### Fragment Flags
-
-| Constant | Value | Description |
-|---|---|---|
-| `FRAG_FLAG_DATA` | `0x02` | Fragment contains data payload. |
-| `FRAG_FLAG_ACKS` | `0x04` | Fragment contains acknowledgment information. |
-| `FRAG_FLAG_LAST_FRAG` | `0x80` | This is the last fragment in a group. |
-
----
-
-## FragmentHeader
-
-Wire format header for each fragment sent over the network. Fixed size of 24 bytes.
+### Constructor
 
 ```cpp
-struct FragmentHeader {
-    uint8_t  Flags;
-    uint8_t  _reserved_0;
-    uint8_t  Channel;
-    uint8_t  _reserved_1;
-    uint16_t Sequence;
-    uint16_t AckSequence;
-    uint64_t AckMask;
-    uint32_t FragGroup;
-    uint32_t FragIndex;
-};
+explicit Connection(Platform &platform);
 ```
 
-### Fields
+Create a connection bound to a platform implementation. Non-copyable.
 
-| Field | Type | Offset | Description |
-|---|---|---|---|
-| `Flags` | `uint8_t` | 0 | Combination of `FRAG_FLAG_*` constants. |
-| `_reserved_0` | `uint8_t` | 1 | Reserved. Must be zero. |
-| `Channel` | `uint8_t` | 2 | Channel ID (1 = Game, 2 = Streaming). |
-| `_reserved_1` | `uint8_t` | 3 | Reserved. Must be zero. |
-| `Sequence` | `uint16_t` | 4 | Sender's sequence number for this fragment. |
-| `AckSequence` | `uint16_t` | 6 | Highest sequence number the sender has received. |
-| `AckMask` | `uint64_t` | 8 | Bitmask of received sequences relative to `AckSequence`. Bit N = `AckSequence - N - 1`. |
-| `FragGroup` | `uint32_t` | 16 | Group identifier. All fragments in the same message share a group. |
-| `FragIndex` | `uint32_t` | 20 | Zero-based index of this fragment within its group. |
-
-**Size**: 24 bytes. Verified by static assertions on all field offsets.
-
----
-
-## Fragment
-
-A single network fragment, either queued for sending or received and awaiting reassembly. Intrusive linked-list node (has `Prev`/`Next` pointers for use with `LinkList`).
+### Public Fields
 
 ```cpp
-struct Fragment {
-    Fragment *Prev;
-    Fragment *Next;
-    FragmentGroup *Group;
-
-    double SendTime;
-
-    FragmentHeader Header;
-    Data Data;
-};
+Channel Game{1, false};       // Channel 1: unreliable, used for state updates
+Channel Streaming{2, true};   // Channel 2: reliable, used for RPCs and guaranteed delivery
 ```
 
-### Fields
+### Public Methods
 
-| Field | Type | Description |
-|---|---|---|
-| `Prev` | `Fragment*` | Previous node in linked list. |
-| `Next` | `Fragment*` | Next node in linked list. |
-| `Group` | `FragmentGroup*` | The group this fragment belongs to. |
-| `SendTime` | `double` | Timestamp when this fragment was sent. Used for RTT and timeout calculations. |
-| `Header` | `FragmentHeader` | The wire-format header for this fragment. |
-| `Data` | `Data` | The fragment's payload bytes. |
-
-Non-copyable (copy constructor and assignment operator deleted).
-
----
-
-## FragmentGroup
-
-Represents a complete message that has been split into one or more fragments. Tracks delivery status of all constituent fragments. Intrusive linked-list node.
-
-```cpp
-struct FragmentGroup {
-    FragmentGroup *Prev;
-    FragmentGroup *Next;
-
-    void *User;
-    Data Data;
-
-    std::optional<bool> WasLost;
-    std::optional<bool> WasDelivered;
-
-    uint32_t Group;
-    uint32_t Count;
-
-    uint8_t *Delivered;
-    uint32_t DeliveredCount;
-};
-```
-
-### Fields
-
-| Field | Type | Description |
-|---|---|---|
-| `Prev` | `FragmentGroup*` | Previous node in linked list. |
-| `Next` | `FragmentGroup*` | Next node in linked list. |
-| `User` | `void*` | Opaque user data pointer. Passed back through `Platform::Lost` and `Platform::Delivered` callbacks. |
-| `Data` | `Data` | The complete reassembled message data. |
-| `WasLost` | `std::optional<bool>` | Set to `true` when the group is determined to be lost. |
-| `WasDelivered` | `std::optional<bool>` | Set to `true` when all fragments have been acknowledged. |
-| `Group` | `uint32_t` | Group identifier matching `FragmentHeader::FragGroup`. |
-| `Count` | `uint32_t` | Total number of fragments in this group. |
-| `Delivered` | `uint8_t*` | Per-fragment delivery status array (one byte per fragment). |
-| `DeliveredCount` | `uint32_t` | Number of fragments confirmed delivered so far. |
-
-### Methods
-
-#### `IsDone`
-
-```cpp
-bool IsDone() const;
-```
-
-Returns `true` if the group's outcome has been determined -- either `WasLost` or `WasDelivered` has a value.
-
-#### `SetDelivered`
-
-```cpp
-void SetDelivered(Fragment *fragment);
-```
-
-Marks the given fragment as delivered. Increments `DeliveredCount`. If all fragments in the group are now delivered, sets `WasDelivered = true`.
-
-Non-copyable (copy constructor and assignment operator deleted).
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `CanQueue` | `bool CanQueue(Channel &chan)` | Returns `true` if the channel can accept more data for queuing. |
+| `Queue` | `bool Queue(Channel &chan, Data data, void *user)` | Queue data for sending on a channel. `user` is an opaque pointer passed to delivery/loss callbacks. Returns `true` on success. |
+| `Send` | `void Send()` | Flush all queued fragments across both channels. Calls `Platform::Send()` for each outgoing packet. |
+| `Update` | `void Update()` | Process pending acknowledgments and detect lost packets. Call once per frame. |
+| `Receive` | `int Receive(Data data)` | Process an incoming packet. Returns `RECV_RESULT_NONE` on success or `RECV_RESULT_DISCONNECT` on fatal error. |
+| `Receive` | `int Receive(Channel &chan, FragmentHeader header, Data data)` | Process an incoming fragment for a specific channel. |
 
 ---
 
 ## Channel
 
-Represents a single logical communication channel within a connection. Each channel has independent send/receive state and can be configured as reliable or unreliable.
+Represents a single communication channel (reliable or unreliable) with send/receive queues.
 
 ```cpp
 struct Channel {
-    uint8_t Id;
-    bool Reliable;
+    uint8_t Id{0};            // Channel identifier (1 = Game, 2 = Streaming)
+    bool Reliable{false};     // True for reliable delivery with resends
 
-    size_t MtuData;
+    size_t MtuData;           // Maximum payload per fragment (PACKET_MTU_BYTES - sizeof(FragmentHeader))
 
-    LinkList<FragmentGroup> Notify;
-
-    uint32_t SendGroup;
-    LinkList<Fragment> SendQueue;
-    LinkList<Fragment> ResendQueue;
-
-    uint32_t RecvGroup;
-    LinkList<Fragment> RecvList;
+    LinkList<FragmentGroup> Notify{};   // Pending delivery notifications
+    uint32_t SendGroup{0};              // Next send group counter
+    LinkList<Fragment> SendQueue{};     // Fragments waiting to be sent
+    LinkList<Fragment> ResendQueue{};   // Fragments pending resend (reliable only)
+    uint32_t RecvGroup{0};              // Next expected receive group
+    LinkList<Fragment> RecvList{};      // Received fragments awaiting reassembly
 };
 ```
-
-### Fields
-
-| Field | Type | Description |
-|---|---|---|
-| `Id` | `uint8_t` | Channel identifier (1 = Game, 2 = Streaming). |
-| `Reliable` | `bool` | If `true`, lost fragments are retransmitted. |
-| `MtuData` | `size_t` | Maximum payload bytes per fragment (`PACKET_MTU_BYTES - sizeof(FragmentHeader)`). |
-| `Notify` | `LinkList<FragmentGroup>` | Groups pending delivery/loss notification. |
-| `SendGroup` | `uint32_t` | Next group ID to assign for outgoing messages. |
-| `SendQueue` | `LinkList<Fragment>` | Fragments waiting to be sent. |
-| `ResendQueue` | `LinkList<Fragment>` | Fragments that need retransmission (reliable channels only). |
-| `RecvGroup` | `uint32_t` | Next expected incoming group ID. |
-| `RecvList` | `LinkList<Fragment>` | Received fragments awaiting reassembly. |
 
 ### Constructor
 
@@ -210,93 +68,96 @@ Non-copyable.
 
 ---
 
-## Connection
+## FragmentHeader
 
-Manages the Notify protocol state for a single peer-to-peer link. Each connection has two built-in channels and handles sequence numbering, acknowledgments, and fragment delivery.
+Wire format header prepended to every fragment.
 
 ```cpp
-class Connection {
-public:
-    Channel Game{1, false};
-    Channel Streaming{2, true};
+struct FragmentHeader {
+    uint8_t Flags;           // Fragment flags (FRAG_FLAG_DATA, FRAG_FLAG_ACKS, FRAG_FLAG_LAST_FRAG)
+    uint8_t _reserved_0;    // Reserved
+    uint8_t Channel;         // Channel ID
+    uint8_t _reserved_1;    // Reserved
+    uint16_t Sequence;       // Packet sequence number
+    uint16_t AckSequence;    // Last received remote sequence number
+    uint64_t AckMask;        // Bitmask of received packets before AckSequence
+    uint32_t FragGroup;      // Fragment group identifier
+    uint32_t FragIndex;      // Index within the fragment group
+};
+
+static_assert(sizeof(FragmentHeader) == 24);
+```
+
+| Field | Offset | Size | Description |
+|-------|--------|------|-------------|
+| `Flags` | 0 | 1 | Bitfield controlling fragment contents. |
+| `Channel` | 2 | 1 | Channel this fragment belongs to. |
+| `Sequence` | 4 | 2 | Monotonically increasing send sequence. |
+| `AckSequence` | 6 | 2 | Highest remote sequence acknowledged. |
+| `AckMask` | 8 | 8 | Bitmask of the 64 packets preceding `AckSequence`. |
+| `FragGroup` | 16 | 4 | Groups fragments that form a single logical message. |
+| `FragIndex` | 20 | 4 | Position of this fragment within the group. |
+
+---
+
+## Fragment
+
+A single fragment in a send or receive queue.
+
+```cpp
+struct Fragment {
+    Fragment *Prev{nullptr};       // LinkList previous pointer
+    Fragment *Next{nullptr};       // LinkList next pointer
+    FragmentGroup *Group{nullptr}; // Parent group
+
+    double SendTime{0};            // Timestamp when the fragment was sent
+
+    FragmentHeader Header{};       // Wire header
+    Data Data{};                   // Payload bytes
 };
 ```
 
-### Built-in Channels
-
-| Field | Channel ID | Reliable | Description |
-|---|---|---|---|
-| `Game` | 1 | No | Unreliable delivery for state replication. Lost data is superseded by newer updates. |
-| `Streaming` | 2 | Yes | Reliable ordered delivery for string heap data and other streams that require completeness. |
-
-### Constructor
-
-```cpp
-explicit Connection(Platform &platform);
-```
-
-Creates a connection bound to a platform implementation for sending/receiving raw packets.
-
 Non-copyable.
 
-### Public Methods
+---
 
-#### `CanQueue`
+## FragmentGroup
 
-```cpp
-bool CanQueue(Channel &chan);
-```
-
-Returns `true` if the channel's send queue can accept more data. Prevents unbounded queue growth.
-
-#### `Queue`
+Groups multiple fragments into a single logical message. Tracks delivery status.
 
 ```cpp
-bool Queue(Channel &chan, Data data, void *user);
+struct FragmentGroup {
+    FragmentGroup *Prev{nullptr};       // LinkList previous pointer
+    FragmentGroup *Next{nullptr};       // LinkList next pointer
+
+    void *User{nullptr};                // Opaque pointer passed to delivery/loss callbacks
+    Data Data{};                        // Reassembled payload (populated on full delivery)
+
+    std::optional<bool> WasLost{};      // Set to true if any fragment was lost
+    std::optional<bool> WasDelivered{}; // Set to true if all fragments were delivered
+
+    uint32_t Group{0};                  // Group identifier
+    uint32_t Count{0};                  // Total fragment count in the group
+
+    uint8_t *Delivered{nullptr};        // Per-fragment delivery bitmap
+    uint32_t DeliveredCount{0};         // Number of fragments confirmed delivered
+};
 ```
 
-Enqueues a message for sending on the specified channel. The message is fragmented into MTU-sized pieces and added to the channel's send queue. The `user` pointer is stored in the `FragmentGroup` and passed back through delivery/loss callbacks.
+### Methods
 
-Returns `true` if the message was successfully queued.
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `IsDone` | `bool IsDone() const` | Returns `true` if the group outcome (lost or delivered) has been determined. |
+| `SetDelivered` | `void SetDelivered(Fragment *fragment)` | Mark a fragment as delivered. When all fragments are delivered, sets `WasDelivered`. |
 
-#### `Send`
-
-```cpp
-void Send();
-```
-
-Transmits queued fragments. Iterates over both channels, sending fragments from `SendQueue` and `ResendQueue` via the `Platform::Send` callback. Each fragment is sent as a single packet with its `FragmentHeader` prepended.
-
-#### `Update`
-
-```cpp
-void Update();
-```
-
-Performs periodic maintenance: processes delivery notifications, detects timed-out fragments, and triggers retransmission for reliable channels. Should be called once per frame.
-
-#### `Receive`
-
-```cpp
-int Receive(Data data);
-int Receive(Channel &chan, FragmentHeader header, Data data);
-```
-
-Processes an incoming packet.
-
-The single-parameter overload parses the `FragmentHeader` from the data, validates the channel ID, processes acknowledgments, and delegates to the channel-specific overload.
-
-The channel-specific overload handles fragment reassembly: adds the fragment to `RecvList`, and when all fragments of a group have arrived, delivers the reassembled message via `Platform::Recv`.
-
-**Return values**:
-- `RECV_RESULT_NONE` (0) -- Normal processing.
-- `RECV_RESULT_DISCONNECT` (2) -- Connection should be terminated.
+Non-copyable.
 
 ---
 
 ## Platform
 
-Abstract interface that the Notify layer uses to interact with the underlying network transport. Engine integrations must provide a concrete implementation.
+Abstract interface that the transport implementation must provide. The `Connection` calls these methods during its operation.
 
 ```cpp
 class Platform {
@@ -304,84 +165,49 @@ public:
     virtual ~Platform() = default;
 
     virtual double Clock() = 0;
+
     virtual void Send(Connection *connection, Data data) = 0;
+
     virtual void Recv(Connection *connection, Channel &channel, Data data) = 0;
+
     virtual void Lost(Connection *connection, Channel &channel, void *user, Data data) = 0;
+
     virtual void Delivered(Connection *connection, Channel &channel, void *user, Data data) = 0;
 };
 ```
 
-### Methods
-
-#### `Clock`
-
-```cpp
-virtual double Clock() = 0;
-```
-
-Returns the current time in seconds. Used for RTT measurement and timeout detection.
-
-#### `Send`
-
-```cpp
-virtual void Send(Connection *connection, Data data) = 0;
-```
-
-Sends raw packet bytes over the network. Called by `Connection::Send` for each fragment. The implementation should transmit `data` to the remote peer associated with `connection`.
-
-#### `Recv`
-
-```cpp
-virtual void Recv(Connection *connection, Channel &channel, Data data) = 0;
-```
-
-Called when a complete message has been reassembled from fragments. The implementation should process the decoded message data.
-
-**Parameters**:
-- `connection` -- The connection that received the message.
-- `channel` -- The channel the message arrived on.
-- `data` -- The complete reassembled message bytes.
-
-#### `Lost`
-
-```cpp
-virtual void Lost(Connection *connection, Channel &channel, void *user, Data data) = 0;
-```
-
-Called when a message is determined to be lost (unreliable channel) or all retransmission attempts have been exhausted.
-
-**Parameters**:
-- `connection` -- The connection that lost the message.
-- `channel` -- The channel the message was sent on.
-- `user` -- The opaque pointer passed to `Connection::Queue`.
-- `data` -- The original message data.
-
-#### `Delivered`
-
-```cpp
-virtual void Delivered(Connection *connection, Channel &channel, void *user, Data data) = 0;
-```
-
-Called when all fragments of a message have been acknowledged by the remote peer.
-
-**Parameters**:
-- `connection` -- The connection that delivered the message.
-- `channel` -- The channel the message was sent on.
-- `user` -- The opaque pointer passed to `Connection::Queue`.
-- `data` -- The original message data.
+| Method | Description |
+|--------|-------------|
+| `Clock()` | Return the current time in seconds (monotonic). Used for RTT calculation and resend timing. |
+| `Send(connection, data)` | Transmit a raw packet over the network. |
+| `Recv(connection, channel, data)` | Called when a complete message is reassembled from fragments. |
+| `Lost(connection, channel, user, data)` | Called when a message is determined to be lost (unreliable) or all resend attempts are exhausted (reliable). `user` is the opaque pointer from `Queue()`. |
+| `Delivered(connection, channel, user, data)` | Called when a message is confirmed delivered by the remote end. `user` is the opaque pointer from `Queue()`. |
 
 ---
 
-## Acknowledgment Model
+## Constants
 
-The Notify protocol uses a sliding-window bitmask for acknowledgments:
+### MTU and Payload
 
-1. Each outgoing fragment gets a monotonically increasing `Sequence` number.
-2. Each fragment carries the sender's latest `AckSequence` and a 64-bit `AckMask`.
-3. `AckSequence` is the highest sequence number the sender has received.
-4. `AckMask` bit N represents whether sequence `AckSequence - N - 1` was received.
-5. This provides acknowledgment coverage for up to 65 sequences in a single packet.
+```cpp
+constexpr int DEFAULT_HEADERS = 40 + 8 + 96;                          // IP + UDP + Photon overhead (144 bytes)
+constexpr int MAX_MTU_BYTES_TOTAL = 1280;                              // Maximum packet size (IPv6 minimum MTU)
+constexpr int MAX_MTU_BYTES_PAYLOAD = MAX_MTU_BYTES_TOTAL - DEFAULT_HEADERS;  // Usable payload (1136 bytes)
+constexpr int PACKET_MTU_BYTES = MAX_MTU_BYTES_PAYLOAD / 8 * 8;       // Payload rounded down to 8-byte alignment (1136 bytes)
+```
 
-For **unreliable** channels, unacknowledged fragments are marked as lost and the `Platform::Lost` callback fires.
+### Receive Result Codes
 
-For **reliable** channels, unacknowledged fragments are moved to the `ResendQueue` and retransmitted until acknowledged.
+```cpp
+constexpr int RECV_RESULT_NONE = 0;          // Packet processed successfully
+constexpr int RECV_RESULT_DISCONNECT = 2;    // Fatal error, connection should be dropped
+```
+
+### Fragment Flags
+
+```cpp
+constexpr uint8_t FRAG_FLAG_DATA      = 1 << 1;   // Fragment carries payload data
+constexpr uint8_t FRAG_FLAG_ACKS      = 1 << 2;   // Fragment carries acknowledgment data
+constexpr uint8_t FRAG_FLAG_LAST_FRAG = 1 << 7;   // Last fragment in the group
+```

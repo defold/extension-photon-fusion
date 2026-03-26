@@ -24,36 +24,38 @@
 #if PHOTON_PLATFORM_SUPPORTED
 
 #include "Client.h"
+#include "ClientConstructOptions.h"
 #include "LogUtils.h"
 #include "LogOutput.h"
+#include "CreateRoomOptions.h"
 
 
-class FusionDefoldLogOutput : public SharedMode::Logging::LogOutput
+class FusionDefoldLogOutput : public PhotonCommon::LogOutput
 {
 public:
     FusionDefoldLogOutput() {}
     ~FusionDefoldLogOutput() {};
-    void LogTrace(const SharedMode::CharType* message)
+    void LogTrace(const PhotonCommon::CharType* message)
     {
         dmLogDebug("%s", (char*)message);
     }
 
-    void LogDebug(const SharedMode::CharType* message)
+    void LogDebug(const PhotonCommon::CharType* message)
     {
         dmLogDebug("%s", (char*)message);
     }
 
-    void LogInfo(const SharedMode::CharType* message)
+    void LogInfo(const PhotonCommon::CharType* message)
     {
         dmLogInfo("%s", (char*)message);
     }
 
-    void LogWarning(const SharedMode::CharType* message)
+    void LogWarning(const PhotonCommon::CharType* message)
     {
         dmLogWarning("%s", (char*)message);
     }
 
-    void LogError(const SharedMode::CharType* message)
+    void LogError(const PhotonCommon::CharType* message)
     {
         dmLogError("%s", (char*)message);
     }
@@ -62,6 +64,7 @@ public:
 
 struct FusionObject
 {
+    dmhash_t                 m_Id;
     SharedMode::ObjectRoot*  m_SharedObject;
     dmVMath::Point3          m_Position;
     dmVMath::Quat            m_Rotation;
@@ -264,7 +267,12 @@ static size_t PopUint8(uint8_t* a, uint8_t* out)
     return 1;
 }
 
-static SharedMode::ObjectRoot* GetObject(dmhash_t id)
+
+/******
+ * Object handlers
+ *************************/
+
+static SharedMode::ObjectRoot* GetSharedObject(dmhash_t id)
 {
     FusionObject** object = g_Ctx->m_FusionObjects.Get(id);
     if (object)
@@ -273,6 +281,138 @@ static SharedMode::ObjectRoot* GetObject(dmhash_t id)
     }
 
     return 0;
+}
+
+static bool HasFusionObject(const SharedMode::ObjectRoot* object)
+{
+    dmHashTable<dmhash_t, FusionObject*>::Iterator iter = g_Ctx->m_FusionObjects.GetIterator();
+    while(iter.Next())
+    {
+        FusionObject* fusion_object = iter.GetValue();
+        if (object == fusion_object->m_SharedObject)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static FusionObject* FindFusionObject(const SharedMode::ObjectRoot* object)
+{
+    dmHashTable<dmhash_t, FusionObject*>::Iterator iter = g_Ctx->m_FusionObjects.GetIterator();
+    while(iter.Next())
+    {
+        FusionObject* fusion_object = iter.GetValue();
+        if (object == fusion_object->m_SharedObject)
+        {
+            return fusion_object;
+        }
+    }
+    return 0;
+}
+
+static dmhash_t DeleteFusionObject(const SharedMode::ObjectRoot* object)
+{
+    FusionObject* fusion_object = FindFusionObject(object);
+    if (!fusion_object)
+    {
+        return 0;
+    }
+    dmhash_t id = fusion_object->m_Id;
+    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
+    dmGameObject::Delete(g_Ctx->m_Collection, instance, true);
+    g_Ctx->m_FusionObjects.Erase(id);
+    free(fusion_object);
+    return id;
+}
+
+static void DeleteGameObject(dmhash_t id)
+{
+    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
+    dmGameObject::Delete(g_Ctx->m_Collection, instance, true);
+}
+
+static dmhash_t CreateGameObject(const SharedMode::ObjectRoot* object)
+{
+    uint64_t socket;
+    uint64_t path;
+    uint64_t fragment;
+
+    uint8_t* header = object->Header.Ptr;
+    size_t offset = 0;
+    offset += PopHash(header + offset, &socket);
+    offset += PopHash(header + offset, &path);
+    offset += PopHash(header + offset, &fragment);
+
+    //
+    // get factory component
+    dmGameObject::HInstance factory_go = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, path);
+    if (factory_go == 0)
+    {
+        dmLogError("Main collection does not have a game object named %s", dmHashReverseSafe64(path));
+        return 0;
+    }
+    dmGameSystem::HFactoryWorld world;
+    dmGameSystem::HFactoryComponent factory;
+    uint32_t component_type_index;
+    dmGameObject::Result r = dmGameObject::GetComponent(factory_go, fragment, &component_type_index, (dmGameObject::HComponent*)&factory, (dmGameObject::HComponentWorld*)&world);
+    if (dmGameObject::RESULT_OK != r)
+    {
+        dmLogError("Unable to get component %s", dmHashReverseSafe64(fragment));
+        return 0;
+    }
+
+    //
+    // spawn gameobject
+    dmVMath::Point3 position = dmVMath::Point3(3.0, 0, 0);
+    dmVMath::Quat rotation = dmVMath::Quat::identity();
+    dmVMath::Vector3 scale = dmVMath::Vector3(1.0, 1.0, 1.0);
+    dmhash_t id = dmGameObject::CreateInstanceId();
+    dmGameObject::HInstance instance;
+
+    dmGameObject::PropertyContainerBuilderParams params;
+    params.m_BoolCount = 1;
+    dmGameObject::HPropertyContainerBuilder builder = dmGameObject::PropertyContainerCreateBuilder(params);
+    dmGameObject::PropertyContainerPushBool(builder, dmHashString64("remote_object"), true);
+    dmGameObject::HPropertyContainer properties = dmGameObject::PropertyContainerCreate(builder);
+
+    r = dmGameSystem::CompFactorySpawn(
+            world, factory, g_Ctx->m_Collection,
+            id, 
+            position, rotation, scale,
+            properties, &instance);
+
+    dmGameObject::PropertyContainerDestroy(properties);
+
+    if (dmGameObject::RESULT_OK != r)
+    {
+        return 0;
+    }
+
+    return id;
+}
+
+static FusionObject* CreateFusionObject(dmhash_t id, SharedMode::ObjectRoot* object)
+{
+    if (g_Ctx->m_FusionObjects.Full())
+    {
+        g_Ctx->m_FusionObjects.OffsetCapacity(100);
+    }
+    FusionObject* fusion_object = (FusionObject*)malloc(sizeof(FusionObject));
+    fusion_object->m_Id = id;
+    fusion_object->m_SharedObject = object;
+    fusion_object->m_Scale.setX(1.0);
+    fusion_object->m_Scale.setY(1.0);
+    fusion_object->m_Scale.setZ(1.0);
+    fusion_object->m_Position.setX(0.0);
+    fusion_object->m_Position.setY(0.0);
+    fusion_object->m_Position.setZ(0.0);
+    fusion_object->m_Rotation.setX(0.0);
+    fusion_object->m_Rotation.setY(0.0);
+    fusion_object->m_Rotation.setZ(0.0);
+    fusion_object->m_Rotation.setW(0.0);
+    g_Ctx->m_FusionObjects.Put(id, fusion_object);
+    return fusion_object;
 }
 
 
@@ -338,96 +478,31 @@ static int CallListener(dmhash_t event_id, const char* v)
     return CallListener(L, 3, 0);
 }
 
-static FusionObject* CreateFusionObject(dmhash_t id, SharedMode::ObjectRoot* object)
+
+
+static void Fusion_OnObjectReady(SharedMode::ObjectRoot* object)
 {
-    if (g_Ctx->m_FusionObjects.Full())
+    dmLogInfo("Fusion_OnObjectReady owner: %d local player: %d", object->Owner, g_Ctx->m_FusionClient->LocalPlayerId());
+
+    dmhash_t id = CreateGameObject(object);
+    if (!id)
     {
-        g_Ctx->m_FusionObjects.OffsetCapacity(100);
+        return;
     }
-    FusionObject* fusion_object = (FusionObject*)malloc(sizeof(FusionObject));
-    fusion_object->m_SharedObject = object;
-    fusion_object->m_Scale.setX(1.0);
-    fusion_object->m_Scale.setY(1.0);
-    fusion_object->m_Scale.setZ(1.0);
-    fusion_object->m_Position.setX(0.0);
-    fusion_object->m_Position.setY(0.0);
-    fusion_object->m_Position.setZ(0.0);
-    fusion_object->m_Rotation.setX(0.0);
-    fusion_object->m_Rotation.setY(0.0);
-    fusion_object->m_Rotation.setZ(0.0);
-    fusion_object->m_Rotation.setW(0.0);
-    g_Ctx->m_FusionObjects.Put(id, fusion_object);
-    return fusion_object;
+
+    FusionObject* fusion_object = CreateFusionObject(id, object);
+    if (fusion_object)
+    {
+        CallListener(dmHashString64("OnObjectCreated"), fusion_object->m_Id);
+    }
+    else
+    {
+        DeleteGameObject(id);
+    }
 }
-
-
-static void Fusion_OnObjectCreated(SharedMode::ObjectRoot* object)
+static void Fusion_OnSubObjectCreated(SharedMode::ObjectChild* child)
 {
-    dmLogInfo("Fusion_OnObjectCreated owner: %d local player: %d", object->Owner, g_Ctx->m_FusionClient->LocalPlayerId());
-
-    uint64_t socket;
-    uint64_t path;
-    uint64_t fragment;
-
-    uint8_t* header = object->Header.Ptr;
-    size_t offset = 0;
-    offset += PopHash(header + offset, &socket);
-    offset += PopHash(header + offset, &path);
-    offset += PopHash(header + offset, &fragment);
-
-    //
-    // get factory component
-    dmGameObject::HInstance factory_go = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, path);
-    if (factory_go == 0)
-    {
-        dmLogError("Main collection does not have a game object named %s", dmHashReverseSafe64(path));
-        return;
-    }
-    dmGameSystem::HFactoryWorld world;
-    dmGameSystem::HFactoryComponent factory;
-    uint32_t component_type_index;
-    dmGameObject::Result r = dmGameObject::GetComponent(factory_go, fragment, &component_type_index, (dmGameObject::HComponent*)&factory, (dmGameObject::HComponentWorld*)&world);
-    if (dmGameObject::RESULT_OK != r)
-    {
-        dmLogError("Unable to get component %s", dmHashReverseSafe64(fragment));
-        return;
-    }
-
-
-    //
-    // spawn gameobject
-    dmVMath::Point3 position = dmVMath::Point3(3.0, 0, 0);
-    dmVMath::Quat rotation = dmVMath::Quat::identity();
-    dmVMath::Vector3 scale = dmVMath::Vector3(1.0, 1.0, 1.0);
-    dmhash_t id = dmGameObject::CreateInstanceId();
-    dmGameObject::HInstance instance;
-
-    dmGameObject::PropertyContainerBuilderParams params;
-    params.m_BoolCount = 1;
-    dmGameObject::HPropertyContainerBuilder builder = dmGameObject::PropertyContainerCreateBuilder(params);
-    dmGameObject::PropertyContainerPushBool(builder, dmHashString64("remote_object"), true);
-    dmGameObject::HPropertyContainer properties = dmGameObject::PropertyContainerCreate(builder);
-
-    r = dmGameSystem::CompFactorySpawn(
-            world, factory, g_Ctx->m_Collection,
-            id, 
-            position, rotation, scale,
-            properties, &instance);
-
-    dmGameObject::PropertyContainerDestroy(properties);
-
-    if (dmGameObject::RESULT_OK != r)
-    {
-        dmLogError("Unable to spawn collection");
-        return;
-    }
-
-    CreateFusionObject(id, object);
-    CallListener(dmHashString64("OnObjectCreated"), id);
-}
-static void Fusion_OnSubObjectCreated(const SharedMode::ObjectChild* child)
-{
-    dmLogInfo("Fusion_OnSubObjectCreated");
+    dmLogInfo("Fusion_OnSubObjectCreated - NOT IMPLEMENTED");
     CallListener(dmHashString64("OnSubObjectCreated"));
 }
 
@@ -453,48 +528,50 @@ static void Fusion_OnObjectDestroyed(const SharedMode::ObjectRoot* object, const
     //     dmLogInfo("DestroyModes Shutdown");
     // }
 
-    dmHashTable<dmhash_t, FusionObject*>::Iterator iter = g_Ctx->m_FusionObjects.GetIterator();
-    while(iter.Next())
+    FusionObject* fusion_object = FindFusionObject(object);
+    if (!fusion_object)
     {
-        dmhash_t id = iter.GetKey();
-        FusionObject* fusion_object = iter.GetValue();
-        dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
-        if (object == fusion_object->m_SharedObject)
-        {
-            dmLogInfo("Found object to destroy %s", dmHashReverseSafe64(id));
-            dmGameObject::Delete(g_Ctx->m_Collection, instance, true);
-            g_Ctx->m_FusionObjects.Erase(id);
-            free(fusion_object);
-
-            CallListener(dmHashString64("OnObjectDestroyed"), id);
-            return;
-        }
+        dmLogError("Unable to find object to destroy");
+        return;
     }
-    dmLogError("Unable to find object to destroy");
+
+    dmhash_t id = DeleteFusionObject(object);
+    if (id)
+    {
+        CallListener(dmHashString64("OnObjectDestroyed"), id);
+    }
+    else
+    {
+        dmLogError("Unable to find object to destroy");
+    }
 }
-static void Fusion_OnObjectOwnerChanged(const SharedMode::ObjectRoot* obj)
+static void Fusion_OnSubObjectDestroyed(SharedMode::ObjectChild* child, const SharedMode::DestroyModes mode)
+{
+    dmLogInfo("Fusion_OnSubObjectDestroyed - NOT IMPLEMENTED");
+}
+static void Fusion_OnObjectOwnerChanged(SharedMode::ObjectRoot* obj)
 {
     dmLogInfo("Fusion_OnObjectOwnerChanged owner: %d local player: %d", obj->Owner, g_Ctx->m_FusionClient->LocalPlayerId());
     CallListener(dmHashString64("OnObjectOwnerChanged"));
 }
-static void Fusion_OnObjectPredictionOverride(const SharedMode::ObjectRoot* obj)
+static void Fusion_OnObjectPredictionOverride(SharedMode::ObjectRoot* obj)
 {
     dmLogInfo("Fusion_OnObjectPredictionOverride");
     CallListener(dmHashString64("OnObjectPredictionOverride"));
 }
-static void Fusion_OnRoomJoin()
-{
-    dmLogInfo("Fusion_OnRoomJoin local player: %d", g_Ctx->m_FusionClient->LocalPlayerId());
-    const char* name = g_Ctx->m_FusionClient->Photon().LoadBalancingClient().getCurrentlyJoinedRoom().getName().UTF8Representation().cstr();
-    dmLogInfo("%s", name);
-    CallListener(dmHashString64("OnRoomJoin"), name);
-}
-static void Fusion_OnRoomLeave()
-{
-    dmLogInfo("Fusion_OnRoomLeave");
-    CallListener(dmHashString64("OnRoomLeave"));
-}
-static void Fusion_OnRpc(const SharedMode::Rpc& rpc)
+// static void Fusion_OnRoomJoin()
+// {
+//     dmLogInfo("Fusion_OnRoomJoin local player: %d", g_Ctx->m_FusionClient->LocalPlayerId());
+//     const char* name = g_Ctx->m_FusionClient->Photon().LoadBalancingClient().getCurrentlyJoinedRoom().getName().UTF8Representation().cstr();
+//     dmLogInfo("%s", name);
+//     CallListener(dmHashString64("OnRoomJoin"), name);
+// }
+// static void Fusion_OnRoomLeave()
+// {
+//     dmLogInfo("Fusion_OnRoomLeave");
+//     CallListener(dmHashString64("OnRoomLeave"));
+// }
+static void Fusion_OnRpc(SharedMode::Rpc& rpc)
 {
     dmLogInfo("Fusion_OnRpc");
     lua_State* L = SetupListener();
@@ -543,16 +620,75 @@ static void Fusion_OnSceneChange(uint32_t index, uint32_t sequence, SharedMode::
         CallListener(L, 3, 0);
     }
 }
+void Fusion_OnDestroyedMapActor(SharedMode::ObjectId id)
+{
+    dmLogInfo("Fusion_OnDestroyedMapActor");
+    lua_State* L = SetupListener();
+    if(L)
+    {
+        dmScript::PushHash(L, dmHashString64("OnDestroyedMapActor"));
 
+        lua_newtable(L);
+
+        lua_pushinteger(L, id.Origin);
+        lua_setfield(L, -2, "id");
+
+        CallListener(L, 3, 0);
+    }
+}
+void Fusion_OnInterestEnter(SharedMode::ObjectRoot* object)
+{
+    dmLogInfo("Fusion_OnInterestEnter");
+    dmhash_t id = CreateGameObject(object);
+    if (!id)
+    {
+        return;
+    }
+
+    FusionObject* fusion_object = CreateFusionObject(id, object);
+    if (fusion_object)
+    {
+        CallListener(dmHashString64("OnInterestEnter"), fusion_object->m_Id);
+    }
+    else
+    {
+        DeleteGameObject(id);
+    }
+}
+void Fusion_OnInterestExit(SharedMode::ObjectRoot* object)
+{
+    dmLogInfo("Fusion_OnInterestExit");
+    dmhash_t id = DeleteFusionObject(object);
+    if (id)
+    {
+        CallListener(dmHashString64("OnInterestExit"), id);
+    }
+}
+void Fusion_OnForcedDisconnect(std::string message)
+{
+    dmLogInfo("Fusion_OnForcedDisconnect");
+    CallListener(dmHashString64("OnForcedDisconnect"), message.c_str());
+}
+void Fusion_OnFusionStart()
+{
+    dmLogInfo("Fusion_OnFusionStart");
+    lua_State* L = SetupListener();
+    if(L)
+    {
+        dmScript::PushHash(L, dmHashString64("OnFusionStart"));
+        CallListener(L, 2, 0);
+    }
+}
 
 
 /******
  * Fusion update lifecycle
  *************************/
 
-static void SerializeObject(dmhash_t id, FusionObject* fusion_object)
+static void SerializeFusionObject(FusionObject* fusion_object)
 {
-    SharedMode::ObjectRoot* object = fusion_object->m_SharedObject;
+    const dmhash_t id = fusion_object->m_Id;
+    const SharedMode::ObjectRoot* object = fusion_object->m_SharedObject;
 
     dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
 
@@ -561,11 +697,11 @@ static void SerializeObject(dmhash_t id, FusionObject* fusion_object)
     dmVMath::Quat rot = dmGameObject::GetRotation(instance);
     dmVMath::Vector3 scale = dmGameObject::GetScale(instance);
 
-    if (object->Flags.InterestMode == SharedMode::ObjectInterestModes::Area)
-    {
-        SharedMode::AOILocation location = g_Ctx->m_FusionClient->CalculateAreaOfInterestLocation(pos.getX(), pos.getY(), pos.getZ());
-        g_Ctx->m_FusionClient->SetAreaOfInterestLocation(object, location);
-    }
+    // if (object->Flags.InterestMode == SharedMode::ObjectInterestModes::Area)
+    // {
+    //     SharedMode::AOILocation location = g_Ctx->m_FusionClient->CalculateAreaOfInterestLocation(pos.getX(), pos.getY(), pos.getZ());
+    //     g_Ctx->m_FusionClient->SetAreaOfInterestLocation(object, location);
+    // }
 
     size_t word_offset = 0;
     word_offset += PushPoint3(words + word_offset, pos);
@@ -651,10 +787,10 @@ static void LerpObjectTransform(dmhash_t id, FusionObject* fusion_object)
     dmVMath::Vector3 newscl = dmVMath::Lerp(0.1, curscl, fusion_object->m_Scale);
     dmGameObject::SetScale(instance, newscl);
 }
-static void DeserializeObject(dmhash_t id, FusionObject* fusion_object)
+static void DeserializeFusionObject(FusionObject* fusion_object)
 {
-
-    SharedMode::ObjectRoot* object = fusion_object->m_SharedObject;
+    const dmhash_t id = fusion_object->m_Id;
+    const SharedMode::ObjectRoot* object = fusion_object->m_SharedObject;
     // if (!g_Ctx->m_FusionClient->HasBeenUpdatedByPlugin(object))
     // {
     //     LerpObjectTransform(id, fusion_object);
@@ -756,7 +892,7 @@ void Fusion_TickBeforeFrameEnd()
         FusionObject* object = iter.GetValue();
         if (g_Ctx->m_FusionClient->IsOwner(object->m_SharedObject))
         {
-            SerializeObject(id, object);
+            SerializeFusionObject(object);
         }
     }
 }
@@ -768,11 +904,10 @@ void Fusion_TickAfterFrameBegin(double dt)
     dmHashTable<dmhash_t, FusionObject*>::Iterator iter = g_Ctx->m_FusionObjects.GetIterator();
     while(iter.Next())
     {
-        dmhash_t id = iter.GetKey();
         FusionObject* object = iter.GetValue();
         if (!g_Ctx->m_FusionClient->IsOwner(object->m_SharedObject))
         {
-            DeserializeObject(id, object);
+            DeserializeFusionObject(object);
         }
     }
 }
@@ -806,16 +941,28 @@ static int Init(lua_State* L)
     {
         delete g_Ctx->m_FusionClient;
     }
-    g_Ctx->m_FusionClient = new SharedMode::Client((const SharedMode::CharType*)appId, (const SharedMode::CharType*)appVersion);
-    g_Ctx->m_FusionClient->OnObjectCreated = Fusion_OnObjectCreated;
-    g_Ctx->m_FusionClient->OnSubObjectCreated = Fusion_OnSubObjectCreated;
-    g_Ctx->m_FusionClient->OnObjectDestroyed = Fusion_OnObjectDestroyed;
-    g_Ctx->m_FusionClient->OnRoomJoin = Fusion_OnRoomJoin;
-    g_Ctx->m_FusionClient->OnRoomLeave = Fusion_OnRoomLeave;
-    g_Ctx->m_FusionClient->OnRpc = Fusion_OnRpc;
-    g_Ctx->m_FusionClient->OnSceneChange = Fusion_OnSceneChange;
-    g_Ctx->m_FusionClient->OnObjectOwnerChanged = Fusion_OnObjectOwnerChanged;
-    g_Ctx->m_FusionClient->OnObjectPredictionOverride = Fusion_OnObjectPredictionOverride;
+
+    PhotonMatchmaking::ClientConstructOptions options = PhotonMatchmaking::ClientConstructOptions();
+    options.appId = (const PhotonCommon::CharType*)appId;
+    options.appVersion = (const PhotonCommon::CharType*)appVersion;
+    PhotonMatchmaking::RealtimeClient* realtimeClient = new PhotonMatchmaking::RealtimeClient(options);
+
+    g_Ctx->m_FusionClient = new SharedMode::Client(*realtimeClient);
+    g_Ctx->m_FusionClient->OnForcedDisconnect.Subscribe(Fusion_OnForcedDisconnect);
+    g_Ctx->m_FusionClient->OnFusionStart.Subscribe(Fusion_OnFusionStart);
+    g_Ctx->m_FusionClient->OnObjectReady.Subscribe(Fusion_OnObjectReady);
+    g_Ctx->m_FusionClient->OnInterestEnter.Subscribe(Fusion_OnInterestEnter);
+    g_Ctx->m_FusionClient->OnInterestExit.Subscribe(Fusion_OnInterestExit);
+    g_Ctx->m_FusionClient->OnSubObjectCreated.Subscribe(Fusion_OnSubObjectCreated);
+    g_Ctx->m_FusionClient->OnObjectDestroyed.Subscribe(Fusion_OnObjectDestroyed);
+    g_Ctx->m_FusionClient->OnSubObjectDestroyed.Subscribe(Fusion_OnSubObjectDestroyed);
+    //g_Ctx->m_FusionClient->OnRoomJoin.Subscribe(Fusion_OnRoomJoin);
+    //g_Ctx->m_FusionClient->OnRoomLeave.Subscribe(Fusion_OnRoomLeave);
+    g_Ctx->m_FusionClient->OnRpc.Subscribe(Fusion_OnRpc);
+    g_Ctx->m_FusionClient->OnSceneChange.Subscribe(Fusion_OnSceneChange);
+    g_Ctx->m_FusionClient->OnObjectOwnerChanged.Subscribe(Fusion_OnObjectOwnerChanged);
+    g_Ctx->m_FusionClient->OnObjectPredictionOverride.Subscribe(Fusion_OnObjectPredictionOverride);
+    g_Ctx->m_FusionClient->OnDestroyedMapActor.Subscribe(Fusion_OnDestroyedMapActor);
 
     g_Ctx->m_FusionDefoldLogOutput = new FusionDefoldLogOutput();
 
@@ -828,6 +975,7 @@ static int Init(lua_State* L)
     g_Ctx->m_Particlefxc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("particlefxc"));
     g_Ctx->m_Labelc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("labelc"));
 
+    // g_Ctx->m_FusionClient->Start();
     return 0;
 }
 
@@ -846,70 +994,270 @@ static int Connect(lua_State* L)
         luaL_error(L, "No Fusion client");
         return 0;
     }
-    if (g_Ctx->m_FusionClient->Photon().IsConnected())
+    if (g_Ctx->m_FusionClient->GetRealtimeClient().IsConnected())
     {
-        luaL_error(L, "Fusion is already disconnected");
+        luaL_error(L, "Fusion is already connected");
         return 0;
     }
 
     DM_LUA_STACK_CHECK(L, 0);
 
-    const char* region = 0x0;
-    if (lua_isstring(L, 1))
-    {
-        region = luaL_checkstring(L, 1);
-    }
+    PhotonMatchmaking::ConnectOptions connectOptions = PhotonMatchmaking::ConnectOptions();
+    connectOptions.useBackgroundSendReceiveThread = false;
 
-    const char* userid = 0x0;
+    // const char* region = 0x0;
+    // if (lua_isstring(L, 1))
+    // {
+    //     region = luaL_checkstring(L, 1);
+    // }
+
+    const char* username = 0x0;
     if (lua_isstring(L, 2))
     {
-        userid = luaL_checkstring(L, 2);
+        username = luaL_checkstring(L, 2);
     }
+    connectOptions.username = (const PhotonCommon::CharType*)username;
 
-    const char* server = 0x0;
-    if (lua_isstring(L, 3))
-    {
-        server = luaL_checkstring(L, 3);
-    }
+    // const char* server = 0x0;
+    // if (lua_isstring(L, 3))
+    // {
+    //     server = luaL_checkstring(L, 3);
+    // }
+    // connectOptions.serverAddress = (const PhotonCommon::CharType*)server;
 
-    dmLogInfo("Calling ConnectCloud with region '%s' user '%s' and server '%s'", region, userid, server);
-    g_Ctx->m_FusionClient->ConnectCloud((const SharedMode::CharType*)region, (const SharedMode::CharType*)userid, (const SharedMode::CharType*)server);
+    // dmLogInfo("Calling Connect with user '%s' and server '%s'", userid, server);
+    g_Ctx->m_FusionClient->GetRealtimeClient().Connect(connectOptions);
+
     return 0;
 }
 
-
-/** Join or create random room
- * @name join_or_create_room_random
- * @string room_name
+/** Disonnect Fusion
+ * @name disconnect
  */
-static int JoinOrCreateRoomRandom(lua_State* L)
+static int Disonnect(lua_State* L)
 {
-    dmLogInfo("JoinRoomRandom");
+    dmLogInfo("Disonnect");
 
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
         return 0;
     }
-    if (!g_Ctx->m_FusionClient->Photon().IsConnected())
+    if (!g_Ctx->m_FusionClient->GetRealtimeClient().IsConnected())
     {
-        luaL_error(L, "Fusion is not connected");
-        return 0;
-    }
-    if (g_Ctx->m_FusionClient->Photon().IsJoiningOrInRoom())
-    {
-        luaL_error(L, "Fusion is already joining or in room");
+        luaL_error(L, "Fusion is already disconnected");
         return 0;
     }
 
     DM_LUA_STACK_CHECK(L, 0);
-    const char* name = luaL_checkstring(L, 1);
-    ExitGames::LoadBalancing::RoomOptions options = ExitGames::LoadBalancing::RoomOptions();
-    options.setIsVisible(true);
-    options.setIsOpen(true);
-    options.setMaxPlayers(4);
-    dmLogInfo("JoinRoomRandom name = %s", name);
-    g_Ctx->m_FusionClient->Photon().JoinOrCreateRoomRandom((const SharedMode::CharType*)name, options);
+    g_Ctx->m_FusionClient->GetRealtimeClient().Disconnect();
+    return 0;
+}
+
+
+/** Reconnect Fusion
+ * @name reconnect
+ */
+static int Reconnect(lua_State* L)
+{
+    dmLogInfo("Reconnect");
+
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+    if (g_Ctx->m_FusionClient->GetRealtimeClient().IsConnected())
+    {
+        luaL_error(L, "Fusion is already connected");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+    g_Ctx->m_FusionClient->GetRealtimeClient().Reconnect();
+    return 0;
+}
+
+/** Start Fusion sync
+ * @name start
+ */
+static int Start(lua_State* L)
+{
+    dmLogInfo("Start");
+
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+    if (!g_Ctx->m_FusionClient->GetRealtimeClient().IsConnected())
+    {
+        luaL_error(L, "Fusion is not connected");
+        return 0;
+    }
+    if (!g_Ctx->m_FusionClient->GetRealtimeClient().IsInRoom())
+    {
+        luaL_error(L, "Fusion is not in a room");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+    g_Ctx->m_FusionClient->Start();
+    return 0;
+}
+
+/** Stop Fusion sync
+ * @name stop
+ */
+static int Stop(lua_State* L)
+{
+    dmLogInfo("Stop");
+
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+    if (!g_Ctx->m_FusionClient->GetRealtimeClient().IsConnected())
+    {
+        luaL_error(L, "Fusion is not connected");
+        return 0;
+    }
+    if (!g_Ctx->m_FusionClient->GetRealtimeClient().IsInRoom())
+    {
+        luaL_error(L, "Fusion is not in a room");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+    g_Ctx->m_FusionClient->Stop();
+    return 0;
+}
+
+
+/** Get connection state
+ * @name get_state
+ * @treturn number Connection state
+ */
+static int GetState(lua_State* L)
+{
+    dmLogInfo("GetState");
+
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 1);
+    PhotonMatchmaking::ConnectionState state = g_Ctx->m_FusionClient->GetRealtimeClient().GetState();
+    lua_pushnumber(L, (lua_Number)state);
+    return 1;
+}
+
+/** Get disconnect cause
+ * @name get_disconnect_cause
+ * @treturn number Disconnect cause
+ */
+static int GetDisconnectCause(lua_State* L)
+{
+    dmLogInfo("GetState");
+
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 1);
+    PhotonMatchmaking::DisconnectCause cause = g_Ctx->m_FusionClient->GetRealtimeClient().GetDisconnectCause();
+    lua_pushnumber(L, (lua_Number)cause);
+    return 1;
+}
+
+/** Join or create random room
+ * @name join_or_create_room_random
+ * @string room_name
+ */
+static int JoinRandomOrCreateRoom(lua_State* L)
+{
+    dmLogInfo("JoinRandomOrCreateRoom");
+
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+    if (!g_Ctx->m_FusionClient->GetRealtimeClient().IsConnected())
+    {
+        luaL_error(L, "Fusion is not connected");
+        return 0;
+    }
+    if (g_Ctx->m_FusionClient->GetRealtimeClient().IsInRoom())
+    {
+        luaL_error(L, "Fusion is already in room");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    PhotonMatchmaking::CreateRoomOptions roomOptions = PhotonMatchmaking::CreateRoomOptions();
+    if (lua_type(L, 1) == LUA_TTABLE)
+    {
+        lua_pushnil(L);
+        while (lua_next(L, 1) != 0)
+        {
+            const char* key = luaL_checkstring(L, -2);
+            if (strcmp("is_visible", key) == 0)
+            {
+                roomOptions.isVisible = lua_toboolean(L, -1);
+            }
+            else if (strcmp("is_open", key) == 0)
+            {
+                roomOptions.isOpen = lua_toboolean(L, -1);
+            }
+            else if (strcmp("max_players", key) == 0)
+            {
+                roomOptions.maxPlayers = lua_tonumber(L, -1);
+            }
+            else if (strcmp("lobby_name", key) == 0)
+            {
+                roomOptions.lobbyName = (const PhotonCommon::CharType*)lua_tostring(L, -1);
+            }
+            else
+            {
+                dmLogInfo("Unknown room option %s", key);
+            }
+            lua_pop(L, -1); // pop value
+        }
+    }
+
+    PhotonMatchmaking::MatchmakingOptions matchmakingOptions = PhotonMatchmaking::MatchmakingOptions();
+    if (lua_type(L, 2) == LUA_TTABLE)
+    {
+        lua_pushnil(L);
+        while (lua_next(L, 2) != 0)
+        {
+            const char* key = luaL_checkstring(L, -2);
+            if (strcmp("max_players", key) == 0)
+            {
+                matchmakingOptions.maxPlayers = lua_tonumber(L, -1);
+            }
+            else if (strcmp("lobby_name", key) == 0)
+            {
+                matchmakingOptions.lobbyName = (const PhotonCommon::CharType*)lua_tostring(L, -1);
+            }
+            else
+            {
+                dmLogInfo("Unknown matchmaking option %s", key);
+            }
+            lua_pop(L, -1); // pop value
+        }
+    }
+
+    dmLogInfo("JoinRandomOrCreateRoom name = %s", (const char*)roomOptions.lobbyName.c_str());
+    g_Ctx->m_FusionClient->GetRealtimeClient().JoinRandomOrCreateRoom(roomOptions, matchmakingOptions);
+
     return 0;
 }
 
@@ -927,7 +1275,7 @@ static int IsConnected(lua_State* L)
     }
 
     DM_LUA_STACK_CHECK(L, 1);
-    bool connected = g_Ctx->m_FusionClient->Photon().IsConnected();
+    bool connected = g_Ctx->m_FusionClient->GetRealtimeClient().IsConnected();
     lua_pushboolean(L, connected);
     return 1;
 }
@@ -965,33 +1313,14 @@ static int IsInRoom(lua_State* L)
     }
 
     DM_LUA_STACK_CHECK(L, 1);
-    bool in_room = g_Ctx->m_FusionClient->Photon().IsInRoom();
+    bool in_room = g_Ctx->m_FusionClient->GetRealtimeClient().IsInRoom();
     lua_pushboolean(L, in_room);
     return 1;
 }
 
 
-/** Check if Fusion is joining or in a room
- * @name is_joining_or_in_room
- * @treturn boolean running
- */
-static int IsJoiningOrInRoom(lua_State* L)
-{
-    if (!g_Ctx->m_FusionClient)
-    {
-        luaL_error(L, "No Fusion client");
-        return 0;
-    }
-
-    DM_LUA_STACK_CHECK(L, 1);
-    bool joining_or_in_room = g_Ctx->m_FusionClient->Photon().IsJoiningOrInRoom();
-    lua_pushboolean(L, joining_or_in_room);
-    return 1;
-}
-
-
 /** Enable/disable debugging
- * @name enable_debugging
+ * @name enable_debug
  * @boolean enable
  */
 static int EnableDebug(lua_State* L)
@@ -1006,15 +1335,15 @@ static int EnableDebug(lua_State* L)
     bool enable = lua_toboolean(L, 1);
     if (enable)
     {
-        g_Ctx->m_FusionClient->Photon().SetLogLevel(ExitGames::Common::DebugLevel::ALL);
-        SharedMode::Logging::AddLogOutput(g_Ctx->m_FusionDefoldLogOutput);
-        SharedMode::Logging::SetLogLevelsFromBitmask(0xFF);
+        // g_Ctx->m_FusionClient->Photon().SetLogLevel(ExitGames::Common::DebugLevel::ALL);
+        PhotonCommon::AddLogOutput(g_Ctx->m_FusionDefoldLogOutput);
+        PhotonCommon::SetLogLevelsFromBitmask(0xFF);
     }
     else
     {
-        g_Ctx->m_FusionClient->Photon().SetLogLevel(ExitGames::Common::DebugLevel::OFF);
-        SharedMode::Logging::RemoveLogOutput(g_Ctx->m_FusionDefoldLogOutput);
-        SharedMode::Logging::SetLogLevelsFromBitmask(0x0);
+        // g_Ctx->m_FusionClient->Photon().SetLogLevel(ExitGames::Common::DebugLevel::OFF);
+        PhotonCommon::RemoveLogOutput(g_Ctx->m_FusionDefoldLogOutput);
+        PhotonCommon::SetLogLevelsFromBitmask(0x0);
     }
     return 0;
 }
@@ -1083,38 +1412,6 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, uint8_t*
 }
 
 
-static SharedMode::ObjectFlags CheckObjectFlags(lua_State* L, int index)
-{
-    SharedMode::ObjectSettingsFlags objectSettingsFlags = SharedMode::ObjectSettingsFlags::None;
-    SharedMode::ObjectOwnerModes objectOwnerMode = SharedMode::ObjectOwnerModes::Dynamic;
-    SharedMode::ObjectInterestModes objectInterestMode = SharedMode::ObjectInterestModes::All;
-
-    if (lua_type(L, index) == LUA_TTABLE)
-    {
-        lua_pushvalue(L, index);
-        lua_pushnil(L);
-        while (lua_next(L, -2) != 0)
-        {
-            const char* key = luaL_checkstring(L, -2);
-            if (dmStrCaseCmp(key, "settings") == 0)
-            {
-                objectSettingsFlags = (SharedMode::ObjectSettingsFlags)luaL_checknumber(L, -1);
-            }
-            else if (dmStrCaseCmp(key, "owner_mode") == 0)
-            {
-                objectOwnerMode = (SharedMode::ObjectOwnerModes)luaL_checknumber(L, -1);
-            }
-            else if (dmStrCaseCmp(key, "interest_mode") == 0)
-            {
-                objectInterestMode = (SharedMode::ObjectInterestModes)luaL_checknumber(L, -1);
-            }
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
-    }
-
-    return SharedMode::ObjectFlags(objectSettingsFlags, objectOwnerMode, objectInterestMode);
-}
 
 /** Register a scene object
  * @name register
@@ -1133,7 +1430,7 @@ static int RegisterSceneObject(lua_State* L)
     dmhash_t id = dmScript::CheckHashOrString(L, 1);
     uint32_t scene = (uint32_t)luaL_checknumber(L, 2);
     dmMessage::URL* factory_url = dmScript::CheckURL(L, 3);
-    SharedMode::ObjectFlags objectFlags = CheckObjectFlags(L, 4);
+    SharedMode::ObjectOwnerModes ownerMode = (SharedMode::ObjectOwnerModes)luaL_checknumber(L, 4);
 
     uint8_t header[1000];
     size_t headerLength;
@@ -1141,6 +1438,7 @@ static int RegisterSceneObject(lua_State* L)
     bool ok = BuildObjectHeader(id, factory_url, header, headerLength, wordsCount);
     if (!ok)
     {
+        luaL_error(L, "Unable to build object header");
         return 0;
     }
 
@@ -1150,15 +1448,21 @@ static int RegisterSceneObject(lua_State* L)
 
 
     bool alreadyPopulated;
-    SharedMode::ObjectRoot* object = g_Ctx->m_FusionClient->CreateSceneObject(alreadyPopulated, wordsCount, type, (SharedMode::CharType*)header, headerLength, scene, factory_url->m_Path, objectFlags);
+    SharedMode::ObjectRoot* object = g_Ctx->m_FusionClient->CreateSceneObject(alreadyPopulated, wordsCount, type, (PhotonCommon::CharType*)header, headerLength, scene, factory_url->m_Path, ownerMode);
     FusionObject* fusion_object = CreateFusionObject(id, object);
+    if (!fusion_object)
+    {
+        luaL_error(L, "Unable to create object");
+        return 0;
+    }
+
     if (!alreadyPopulated)
     {
-        SerializeObject(id, fusion_object);
+        SerializeFusionObject(fusion_object);
     }
     else
     {
-        DeserializeObject(id, fusion_object);
+        DeserializeFusionObject(fusion_object);
     }
 
     return 0;
@@ -1182,7 +1486,7 @@ static int RegisterObject(lua_State* L)
     dmhash_t id = dmScript::CheckHashOrString(L, 1);
     uint32_t scene = (uint32_t)luaL_checknumber(L, 2);
     dmMessage::URL* factory_url = dmScript::CheckURL(L, 3);
-    SharedMode::ObjectFlags objectFlags = CheckObjectFlags(L, 4);
+    SharedMode::ObjectOwnerModes ownerMode = (SharedMode::ObjectOwnerModes)luaL_checknumber(L, 4);
 
     uint8_t header[1000];
     size_t headerLength;
@@ -1190,6 +1494,7 @@ static int RegisterObject(lua_State* L)
     bool ok = BuildObjectHeader(id, factory_url, header, headerLength, wordsCount);
     if (!ok)
     {
+        luaL_error(L, "Unable to build object header");
         return 0;
     }
 
@@ -1197,8 +1502,14 @@ static int RegisterObject(lua_State* L)
     type.Hash = 0;
     type.WordCount = wordsCount + SharedMode::Object::ExtraTailWords;
 
-    SharedMode::ObjectRoot* object = g_Ctx->m_FusionClient->CreateObject(wordsCount, type, (SharedMode::CharType*)header, headerLength, scene, objectFlags);
-    CreateFusionObject(id, object);
+    SharedMode::ObjectRoot* object = g_Ctx->m_FusionClient->CreateObject(wordsCount, type, (PhotonCommon::CharType*)header, headerLength, scene, ownerMode);
+    FusionObject* fusion_object = CreateFusionObject(id, object);
+    if (!fusion_object)
+    {
+        luaL_error(L, "Unable to create object");
+        return 0;
+    }
+
 
     return 0;
 }
@@ -1219,7 +1530,7 @@ static int DestroyObject(lua_State* L)
 
     dmhash_t id = dmScript::CheckHashOrString(L, 1);
     dmLogInfo("DestroyObject id: %s", dmHashReverseSafe64(id));
-    SharedMode::ObjectRoot* object = GetObject(id);
+    SharedMode::ObjectRoot* object = GetSharedObject(id);
     if (object)
     {
         g_Ctx->m_FusionObjects.Erase(id);
@@ -1344,7 +1655,7 @@ static int GetOwner(lua_State* L)
     DM_LUA_STACK_CHECK(L, 1);
 
     dmhash_t id = dmScript::CheckHashOrString(L, 1);
-    SharedMode::ObjectRoot* object = GetObject(id);
+    const SharedMode::ObjectRoot* object = GetSharedObject(id);
     if (object)
     {
         SharedMode::PlayerId owner = g_Ctx->m_FusionClient->GetOwner(object);
@@ -1375,7 +1686,7 @@ static int IsOwner(lua_State* L)
     DM_LUA_STACK_CHECK(L, 1);
 
     dmhash_t id = dmScript::CheckHashOrString(L, 1);
-    SharedMode::ObjectRoot* object = GetObject(id);
+    const SharedMode::ObjectRoot* object = GetSharedObject(id);
     if (object)
     {
         bool is_owner = g_Ctx->m_FusionClient->IsOwner(object);
@@ -1405,7 +1716,7 @@ static int HasOwner(lua_State* L)
     DM_LUA_STACK_CHECK(L, 1);
 
     dmhash_t id = dmScript::CheckHashOrString(L, 1);
-    SharedMode::ObjectRoot* object = GetObject(id);
+    const SharedMode::ObjectRoot* object = GetSharedObject(id);
     if (object)
     {
         bool has_owner = g_Ctx->m_FusionClient->HasOwner(object);
@@ -1434,7 +1745,7 @@ static int SetWantOwner(lua_State* L)
     DM_LUA_STACK_CHECK(L, 0);
 
     dmhash_t id = dmScript::CheckHashOrString(L, 1);
-    SharedMode::ObjectRoot* object = GetObject(id);
+    SharedMode::ObjectRoot* object = GetSharedObject(id);
     if (object)
     {
         g_Ctx->m_FusionClient->SetWantOwner(object);
@@ -1458,7 +1769,7 @@ static int SetDontWantOwner(lua_State* L)
     DM_LUA_STACK_CHECK(L, 0);
 
     dmhash_t id = dmScript::CheckHashOrString(L, 1);
-    SharedMode::ObjectRoot* object = GetObject(id);
+    SharedMode::ObjectRoot* object = GetSharedObject(id);
     if (object)
     {
         g_Ctx->m_FusionClient->SetDontWantOwner(object);
@@ -1482,7 +1793,7 @@ static int ClearOwnerCooldown(lua_State* L)
     DM_LUA_STACK_CHECK(L, 0);
 
     dmhash_t id = dmScript::CheckHashOrString(L, 1);
-    SharedMode::ObjectRoot* object = GetObject(id);
+    SharedMode::ObjectRoot* object = GetSharedObject(id);
     if (object)
     {
         g_Ctx->m_FusionClient->ClearOwnerCooldown(object);
@@ -1584,11 +1895,12 @@ static int AreaOfInterestUsed(lua_State* L)
         return 0;
     }
 
-    DM_LUA_STACK_CHECK(L, 1);
+    // DM_LUA_STACK_CHECK(L, 1);
 
-    bool used = g_Ctx->m_FusionClient->AreaOfInterestUsed();
-    lua_pushboolean(L, used);
-    return 1;
+    // bool used = g_Ctx->m_FusionClient->AreaOfInterestUsed();
+    // lua_pushboolean(L, used);
+    // return 1;
+    return 0;
 }
 
 /**
@@ -1604,17 +1916,25 @@ static int AreaOfInterestCellSize(lua_State* L)
         return 0;
     }
 
-    DM_LUA_STACK_CHECK(L, 1);
+    // DM_LUA_STACK_CHECK(L, 1);
 
-    int32_t size = g_Ctx->m_FusionClient->AreaOfInterestCellSize();
-    lua_pushinteger(L, size);
-    return 1;
+    // int32_t size = g_Ctx->m_FusionClient->AreaOfInterestCellSize();
+    // lua_pushinteger(L, size);
+    // return 1;
+    return 0;
 }
 
 static const luaL_reg Module_methods[] = {
     { "init", Init },
     { "connect", Connect },
-    { "join_or_create_room_random", JoinOrCreateRoomRandom },
+    { "disconnect", Disonnect },
+    { "reconnect", Reconnect },
+    { "start", Start },
+    { "stop", Stop },
+    { "get_state", GetState },
+    { "get_disconnect_cause", GetDisconnectCause },
+
+    { "join_or_create_room_random", JoinRandomOrCreateRoom },
     { "enable_debug", EnableDebug },
     { "get_local_player_id", GetLocalPlayerId },
     { "player_count", PlayerCount },
@@ -1639,7 +1959,7 @@ static const luaL_reg Module_methods[] = {
     { "is_connected", IsConnected },
     { "is_running", IsRunning },
     { "is_in_room", IsInRoom },
-    { "is_joining_or_in_room", IsJoiningOrInRoom },
+    // { "is_joining_or_in_room", IsJoiningOrInRoom },
     { "is_master_client", IsMasterClient },
 
     // ownership
@@ -1680,39 +2000,129 @@ static void LuaInit(lua_State* L)
      */
     SETCONSTANT(OWNERMODE_MASTERCLIENT, SharedMode::ObjectOwnerModes::MasterClient)
 
+    /**
+     * STATE_DISCONNECTED
+     * @field STATE_DISCONNECTED
+     */
+    SETCONSTANT(STATE_DISCONNECTED, PhotonMatchmaking::ConnectionState::Disconnected)
+    /**
+     * STATE_CONNECTING
+     * @field STATE_CONNECTING
+     */
+    SETCONSTANT(STATE_CONNECTING, PhotonMatchmaking::ConnectionState::Connecting)
+    /**
+     * STATE_CONNECTED
+     * @field STATE_CONNECTED
+     */
+    SETCONSTANT(STATE_CONNECTED, PhotonMatchmaking::ConnectionState::Connected)
+    /**
+     * STATE_JOININGROOM
+     * @field STATE_JOININGROOM
+     */
+    SETCONSTANT(STATE_JOININGROOM, PhotonMatchmaking::ConnectionState::JoiningRoom)
+    /**
+     * STATE_INROOM
+     * @field STATE_INROOM
+     */
+    SETCONSTANT(STATE_INROOM, PhotonMatchmaking::ConnectionState::InRoom)
+    /**
+     * STATE_LEAVINGROOM
+     * @field STATE_LEAVINGROOM
+     */
+    SETCONSTANT(STATE_LEAVINGROOM, PhotonMatchmaking::ConnectionState::LeavingRoom)
+    /**
+     * STATE_DISCONNECTING
+     * @field STATE_DISCONNECTING
+     */
+    SETCONSTANT(STATE_DISCONNECTING, PhotonMatchmaking::ConnectionState::Disconnecting)
+
 
     /**
-     * OBJECTSETTINGS_NONE
-     * @field OBJECTSETTINGS_NONE
+     * DISCONNECT_CAUSE_NONE
+     * @field DISCONNECT_CAUSE_NONE
      */
-    SETCONSTANT(OBJECTSETTINGS_NONE, SharedMode::ObjectSettingsFlags::None)
+    SETCONSTANT(DISCONNECT_CAUSE_NONE, PhotonMatchmaking::DisconnectCause::None)
     /**
-     * OBJECTSETTINGS_OWNERLEAVESOWNERTONONE
-     * @field OBJECTSETTINGS_OWNERLEAVESOWNERTONONE
+     * DISCONNECT_CAUSE_DISCONNECTBYSERVERUSERLIMIT
+     * @field DISCONNECT_CAUSE_DISCONNECTBYSERVERUSERLIMIT
      */
-    SETCONSTANT(OBJECTSETTINGS_OWNERLEAVESOWNERTONONE, SharedMode::ObjectSettingsFlags::OwnerLeavesOwnerToNone)
+    SETCONSTANT(DISCONNECT_CAUSE_DISCONNECTBYSERVERUSERLIMIT, PhotonMatchmaking::DisconnectCause::DisconnectByServerUserLimit)
     /**
-     * OBJECTSETTINGS_ISGLOBALINSTANCE
-     * @field OBJECTSETTINGS_ISGLOBALINSTANCE
+     * DISCONNECT_CAUSE_EXCEPTIONONCONNECT
+     * @field DISCONNECT_CAUSE_EXCEPTIONONCONNECT
      */
-    SETCONSTANT(OBJECTSETTINGS_ISGLOBALINSTANCE, SharedMode::ObjectSettingsFlags::IsGlobalInstance)
+    SETCONSTANT(DISCONNECT_CAUSE_EXCEPTIONONCONNECT, PhotonMatchmaking::DisconnectCause::ExceptionOnConnect)
+    /**
+     * DISCONNECT_CAUSE_DISCONNECTBYSERVER
+     * @field DISCONNECT_CAUSE_DISCONNECTBYSERVER
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_DISCONNECTBYSERVER, PhotonMatchmaking::DisconnectCause::DisconnectByServer)
+    /**
+     * DISCONNECT_CAUSE_DISCONNECTBYSERVERLOGIC
+     * @field DISCONNECT_CAUSE_DISCONNECTBYSERVERLOGIC
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_DISCONNECTBYSERVERLOGIC, PhotonMatchmaking::DisconnectCause::DisconnectByServerLogic)
+    /**
+     * DISCONNECT_CAUSE_TIMEOUTDISCONNECT
+     * @field DISCONNECT_CAUSE_TIMEOUTDISCONNECT
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_TIMEOUTDISCONNECT, PhotonMatchmaking::DisconnectCause::TimeoutDisconnect)
+    /**
+     * DISCONNECT_CAUSE_EXCEPTION
+     * @field DISCONNECT_CAUSE_EXCEPTION
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_EXCEPTION, PhotonMatchmaking::DisconnectCause::Exception)
+    /**
+     * DISCONNECT_CAUSE_INVALIDAUTHENTICATION
+     * @field DISCONNECT_CAUSE_INVALIDAUTHENTICATION
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_INVALIDAUTHENTICATION, PhotonMatchmaking::DisconnectCause::InvalidAuthentication)
+    /**
+     * DISCONNECT_CAUSE_MAXCCUREACHED
+     * @field DISCONNECT_CAUSE_MAXCCUREACHED
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_MAXCCUREACHED, PhotonMatchmaking::DisconnectCause::MaxCCUReached)
+    /**
+     * DISCONNECT_CAUSE_INVALIDREGION
+     * @field DISCONNECT_CAUSE_INVALIDREGION
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_INVALIDREGION, PhotonMatchmaking::DisconnectCause::InvalidRegion)
+    /**
+     * DISCONNECT_CAUSE_OPERATIONNOTALLOWEDINCURRENTSTATE
+     * @field DISCONNECT_CAUSE_OPERATIONNOTALLOWEDINCURRENTSTATE
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_OPERATIONNOTALLOWEDINCURRENTSTATE, PhotonMatchmaking::DisconnectCause::OperationNotAllowedInCurrentState)
+    /**
+     * DISCONNECT_CAUSE_CUSTOMAUTHENTICATIONFAILED
+     * @field DISCONNECT_CAUSE_CUSTOMAUTHENTICATIONFAILED
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_CUSTOMAUTHENTICATIONFAILED, PhotonMatchmaking::DisconnectCause::CustomAuthenticationFailed)
+    /**
+     * DISCONNECT_CAUSE_CLIENTVERSIONTOOOLD
+     * @field DISCONNECT_CAUSE_CLIENTVERSIONTOOOLD
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_CLIENTVERSIONTOOOLD, PhotonMatchmaking::DisconnectCause::ClientVersionTooOld)
+    /**
+     * DISCONNECT_CAUSE_CLIENTVERSIONINVALID
+     * @field DISCONNECT_CAUSE_CLIENTVERSIONINVALID
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_CLIENTVERSIONINVALID, PhotonMatchmaking::DisconnectCause::ClientVersionInvalid)
+    /**
+     * DISCONNECT_CAUSE_DASHBOARDVERSIONINVALID
+     * @field DISCONNECT_CAUSE_DASHBOARDVERSIONINVALID
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_DASHBOARDVERSIONINVALID, PhotonMatchmaking::DisconnectCause::DashboardVersionInvalid)
+    /**
+     * DISCONNECT_CAUSE_AUTHENTICATIONTICKETEXPIRED
+     * @field DISCONNECT_CAUSE_AUTHENTICATIONTICKETEXPIRED
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_AUTHENTICATIONTICKETEXPIRED, PhotonMatchmaking::DisconnectCause::AuthenticationTicketExpired)
+    /**
+     * DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT
+     * @field DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT
+     */
+    SETCONSTANT(DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT, PhotonMatchmaking::DisconnectCause::DisconnectByOperationLimit)
 
-
-    /**
-     * INTERESTMODE_ALL
-     * @field INTERESTMODE_ALL
-     */
-    SETCONSTANT(INTERESTMODE_ALL, SharedMode::ObjectInterestModes::All)
-    /**
-     * INTERESTMODE_AREA
-     * @field INTERESTMODE_AREA
-     */
-    SETCONSTANT(INTERESTMODE_AREA, SharedMode::ObjectInterestModes::Area)
-    /**
-     * INTERESTMODE_ASSIGNED
-     * @field INTERESTMODE_ASSIGNED
-     */
-    SETCONSTANT(INTERESTMODE_ASSIGNED, SharedMode::ObjectInterestModes::Assigned)
 
     #undef SETCONSTANT
 
@@ -1748,7 +2158,7 @@ dmExtension::Result FinalizeFusion(dmExtension::Params* params)
     dmLogInfo("FinalizeFusion");
     if (g_Ctx->m_FusionClient)
     {
-        g_Ctx->m_FusionClient->Shutdown(false);
+        g_Ctx->m_FusionClient->Shutdown();
         delete g_Ctx->m_FusionClient;
         g_Ctx->m_FusionClient = 0;
     }
@@ -1779,8 +2189,9 @@ dmExtension::Result UpdateFusion(dmExtension::Params* params)
 
     if (g_Ctx->m_FusionClient)
     {
-        g_Ctx->m_FusionClient->Photon().Service(true);
-        if (g_Ctx->m_FusionClient->Photon().IsInRoom())
+        g_Ctx->m_FusionClient->GetRealtimeClient().Service(true);
+
+        if (g_Ctx->m_FusionClient->GetRealtimeClient().IsInRoom())
         {
             Fusion_TickBeforeFrameEnd();
             g_Ctx->m_FusionClient->UpdateFrameEnd();

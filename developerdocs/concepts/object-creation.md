@@ -1,29 +1,35 @@
 # Object Creation
 
-Fusion provides three distinct paths for creating networked objects, each suited to a different scenario. All three produce objects backed by a [Words buffer](objects.md) and replicated by the SDK, but they differ in ID assignment, lifetime, and creation flow.
+Fusion provides three distinct paths for creating networked objects, plus a two-step process for sub-objects. All paths produce objects backed by a [Words buffer](objects.md) and replicated by the SDK, but they differ in ID assignment, lifetime, and creation flow.
 
 | Path | Method | ID Assignment | Use Case |
 |------|--------|---------------|----------|
-| Spawned | `CreateObject` | Auto-incremented per client | Player avatars, projectiles, pickups |
-| Scene | `CreateSceneObject` | Deterministic (hash of name) | Level geometry, doors, switches |
-| Sub-object | `CreateSubObject` + `AddSubObject` | Explicit or auto | Inventory items, attachments, weapon mods |
+| Dynamic | `CreateObject` | Auto-incremented per client | Player avatars, projectiles, pickups |
+| Scene | `CreateSceneObject` | Deterministic (scene + id) | Level geometry, doors, switches |
+| Global Instance | `CreateGlobalInstanceObject` | Deterministic (singleton) | Game managers, scoreboards |
+| Sub-object | `CreateSubObject` + `AddSubObject` | Explicit | Inventory items, attachments |
 
-## Spawned Objects (CreateObject)
+## Dynamic Objects (CreateObject)
 
-Spawned objects are the most common path. The creating client provides a type descriptor and header blob; the SDK assigns a unique `ObjectId` and replicates the object to all interested clients.
+Dynamic objects are the most common path. The creating client provides a type descriptor and header blob; the SDK assigns a unique `ObjectId` and replicates the object to all interested clients.
 
 ```cpp
 ObjectRoot* Client::CreateObject(
-    size_t          words,          // Word count (user data + ExtraTailWords)
-    const TypeRef&  type,           // { Hash, WordCount } for type identification
-    const CharType* header,         // Opaque header blob (scene path, config, etc.)
-    size_t          headerLength,
-    uint32_t        scene,          // Scene sequence this object belongs to
-    ObjectFlags     objectFlags     // Owner mode, interest mode, settings
+    size_t              words,       // Word count (user data + ExtraTailWords)
+    const TypeRef&      type,        // { Hash, WordCount } for type identification
+    const CharType*     header,      // Opaque header blob (scene path, config, etc.)
+    size_t              headerLength,
+    uint32_t            scene,       // Scene sequence this object belongs to
+    ObjectOwnerModes    ownerMode,   // Ownership behavior
+    int32_t             requiredObjectsCount = 0  // Dependencies before ready
 );
 ```
 
-### ObjectId
+### ObjectId Assignment
+
+```cpp
+ObjectId Client::GetNewObjectId();
+```
 
 Every object receives an `ObjectId` composed of two fields:
 
@@ -38,57 +44,62 @@ The SDK auto-assigns IDs via `GetNewObjectId()`. The `Origin` field enables conf
 
 ### Header
 
-The `header` parameter is an opaque byte blob stored alongside the object. Remote clients receive it in the `OnObjectCreated` callback and use it to determine which scene to instantiate. Typical contents include a scene resource path or a type hash. The SDK does not interpret the header -- it is passed through as-is.
+The `header` parameter is an opaque byte blob stored alongside the object. Remote clients receive it in the `OnObjectReady` callback and use it to determine which scene to instantiate. Typical contents include a scene resource path or a type hash. The SDK does not interpret the header -- it passes it through as-is.
 
-### Remote Creation Callback
+### Remote Object Ready
 
-When a remote client creates a spawned object, the SDK fires:
+When a remote client's object becomes fully synchronized, the SDK fires:
 
 ```cpp
-std::function<void(ObjectRoot*)> OnObjectCreated;
+Broadcaster<void(ObjectRoot*)> OnObjectReady;
 ```
 
-The callback receives the fully initialized `ObjectRoot` with `Header`, `Type`, and `Flags` populated. The integration layer reads the header, instantiates the appropriate scene, and begins synchronization.
+The callback receives the fully initialized `ObjectRoot` with `Header`, `Type`, and `OwnerMode` populated. The `ObjectReady` flag on the root is set to `true`. The integration layer reads the header, instantiates the appropriate scene, and begins synchronization.
+
+An object becomes "ready" when it reaches `OBJECT_STATUS_CREATED` and all of its required objects (specified by `requiredObjectsCount`) are also created and present.
 
 ### Destruction
 
-The owner destroys a spawned object by calling:
+The owner destroys a dynamic object by calling:
 
 ```cpp
 bool Client::DestroyObjectLocal(ObjectRoot* obj, bool engineObjectAlreadyDestroyed);
 ```
 
-Set `engineObjectAlreadyDestroyed` to `true` if the engine-side node has already been freed (e.g., `queue_free()` was called first). The SDK broadcasts the destruction to all clients. Remote clients receive:
+Set `engineObjectAlreadyDestroyed` to `true` if the engine-side entity has already been freed. The SDK broadcasts the destruction to all clients:
 
 ```cpp
-std::function<void(const ObjectRoot*, DestroyModes)> OnObjectDestroyed;
+Broadcaster<void(const ObjectRoot*, DestroyModes)> OnObjectDestroyed;
 ```
 
 ### DestroyModes
 
 ```cpp
 enum class DestroyModes {
-    Local      = 0,   // Owner explicitly destroyed the object
-    Remote     = 1,   // Destruction replicated from owner
-    SceneChange = 2,  // Object destroyed due to scene transition
-    Shutdown   = 3,   // Client shutting down
+    Local           = 0,   // Owner explicitly destroyed
+    Remote          = 1,   // Destruction replicated from owner
+    SceneChange     = 2,   // Destroyed due to scene transition
+    Shutdown        = 3,   // Client shutting down
+    RejectedNotOwner = 4,  // Server rejected: not the owner
+    ForceDestroy    = 5,   // Server forced destruction
 };
 ```
 
 ## Scene Objects (CreateSceneObject)
 
-Scene objects represent entities that exist in the level itself -- they are not spawned dynamically but are part of the loaded scene. Every client creates the same scene objects locally; the SDK reconciles them using deterministic IDs.
+Scene objects represent entities that exist in the level itself -- not spawned dynamically but part of the loaded scene. Every client creates the same scene objects locally; the SDK reconciles them using deterministic IDs.
 
 ```cpp
 ObjectRoot* Client::CreateSceneObject(
-    bool&           alreadyPopulated,   // [out] true if network data exists
-    size_t          words,
-    const TypeRef&  type,
-    const CharType* header,
-    size_t          headerLength,
-    uint32_t        scene,              // Scene sequence
-    uint32_t        id,                 // Deterministic object ID (e.g., hash of node name)
-    ObjectFlags     objectFlags
+    bool&               alreadyPopulated,  // [out] true if network data exists
+    size_t              words,
+    const TypeRef&      type,
+    const CharType*     header,
+    size_t              headerLength,
+    uint32_t            scene,             // Scene sequence
+    uint32_t            id,                // Deterministic object ID
+    ObjectOwnerModes    ownerMode,
+    int32_t             requiredObjectsCount = 0
 );
 ```
 
@@ -99,138 +110,118 @@ The critical difference from `CreateObject` is the `alreadyPopulated` output par
 - **`false`** -- This client is the first to create the object (typically the master client). Engine defaults should be serialized into the Words buffer.
 - **`true`** -- Another client already populated the object. The Words buffer contains network data that should be deserialized into the engine state.
 
-This eliminates the need for a separate "spawn data" exchange for scene objects.
+This bidirectional flow eliminates the need for separate "spawn data" exchange for scene objects.
 
 ### Deterministic IDs
 
 Scene objects use a deterministic `id` parameter instead of auto-assigned IDs. All clients loading the same scene must produce the same ID for the same object. A common approach is hashing the object's name or path:
 
 ```cpp
-uint32_t id = hash(rootNodeName);
+uint32_t id = CRC64(rootNodeName);
 ```
 
-### Global Instance Objects
+## Global Instance Objects (CreateGlobalInstanceObject)
 
-A variant for singleton objects that persist across scenes:
+A variant for singleton objects that persist across scene changes:
 
 ```cpp
 ObjectRoot* Client::CreateGlobalInstanceObject(
-    bool&           alreadyPopulated,
-    size_t          words,
-    const TypeRef&  type,
-    const CharType* header,
-    size_t          headerLength,
-    uint32_t        scene,
-    uint32_t        id,
-    ObjectFlags     objectFlags
-);
-```
-
-Global instance objects use the `ObjectSettingsFlags::IsGlobalInstance` flag and survive scene transitions.
-
-## Sub-Objects (CreateSubObject + AddSubObject)
-
-Sub-objects are child objects attached to an existing root object. They share the root's `NetworkedStringHeap` and authority, but have their own `ObjectId`, Words buffer, and synchronization state.
-
-```cpp
-ObjectChild* Client::CreateSubObject(
-    ObjectId            parent,             // Parent root's ObjectId
+    bool&               alreadyPopulated,
     size_t              words,
     const TypeRef&      type,
     const CharType*     header,
     size_t              headerLength,
-    uint32_t            targetObjectHash,   // Type identifier for remote matching
-    ObjectId            id,                 // Explicit child ID
+    uint32_t            scene,
+    uint32_t            id,
+    ObjectOwnerModes    ownerMode,
+    int32_t             requiredObjectsCount = 0
+);
+```
+
+Global instance objects survive scene transitions and maintain their state across `ChangeScene()` calls. They follow the same `alreadyPopulated` pattern as scene objects.
+
+## Sub-Objects (CreateSubObject + AddSubObject)
+
+Sub-objects are child objects attached to an existing root object. They share the root's authority but have their own `ObjectId`, Words buffer, and synchronization state.
+
+### Two-Step Creation
+
+```cpp
+// Step 1: Create the child
+ObjectChild* Client::CreateSubObject(
+    ObjectId            parent,            // Parent root's ObjectId
+    size_t              words,
+    const TypeRef&      type,
+    const CharType*     header,
+    size_t              headerLength,
+    uint32_t            targetObjectHash,  // Type identifier for remote matching
+    ObjectId            id,                // Explicit child ID
     ObjectSpecialFlags  SpecialFlags
 );
 
+// Step 2: Attach to parent
 bool Client::AddSubObject(ObjectRoot* ParentObject, ObjectChild* SubObject);
 ```
 
 ### Creation Flow
 
-1. Create the child: `CreateSubObject(parentId, words, type, header, headerLength, typeHash, childId, flags)`
-2. Write initial state into `SubObject->Words`
-3. Attach to parent: `AddSubObject(parent, child)`
+```cpp
+// 1. Create the child
+ObjectChild* child = client->CreateSubObject(
+    parentId, words, type,
+    header, headerLength,
+    typeHash, childId, ObjectSpecialFlags::None
+);
+
+// 2. Write initial state into child Words
+child->SetSendUpdates(false);
+write_initial_state(child);
+
+// 3. Attach to parent
+client->AddSubObject(parentRoot, child);
+
+// 4. Activate
+child->SetSendUpdates(true);
+child->SetHasValidData(true);
+```
 
 `AddSubObject` must be called after the child's Words buffer is populated. Once added, the SDK replicates the child to remote clients.
 
 ### Remote Sub-Object Callback
 
 ```cpp
-std::function<void(ObjectChild*)> OnSubObjectCreated;
+Broadcaster<void(ObjectChild*)> OnSubObjectCreated;
 ```
 
-Remote clients receive the `ObjectChild` with its `TargetObjectHash` and `Parent` ID. The integration layer matches `TargetObjectHash` to determine the child's type, instantiates the scene, and deserializes the Words data.
+Remote clients receive the `ObjectChild` with its `TargetObjectHash` and `Parent` ID. The integration layer matches `TargetObjectHash` to determine the child's type.
+
+### Sub-Object Destruction
+
+```cpp
+bool Client::DestroySubObjectLocal(ObjectChild* obj);
+
+Broadcaster<void(ObjectChild*, DestroyModes)> OnSubObjectDestroyed;
+```
 
 ### Querying Sub-Objects
 
 ```cpp
 bool Client::HasSubObjects(const Object* Root);
 const std::vector<ObjectId>& Client::GetSubObject(const Object* Root);
-Object* Client::FindSubObjectWithHash(ObjectRoot* Root, uint32_t subObjectHash) const;
+Object* Client::FindSubObjectWithHash(ObjectRoot* Root, uint32_t subObjectHash);
 ```
 
-### ObjectChild Class
+## Word Count Calculation
+
+The `words` parameter in all creation methods must include both user data words and the SDK-reserved tail:
 
 ```cpp
-class ObjectChild final : public Object {
-public:
-    ObjectId Parent{0, 0};
-    uint32_t TargetObjectHash{0};
-
-    static ObjectId GetParent(const Object* obj);
-    static bool Is(const Object* obj);
-    static ObjectChild* Cast(Object* obj);
-
-    ObjectRoot* Root() override;  // Navigates to parent root
-};
+size_t total_words = user_property_words + Object::ExtraTailWords;  // ExtraTailWords = 6
 ```
 
-Sub-objects delegate string operations to `Root()->StringHeap`, so all string handles within a hierarchy share the same heap.
+The `ExtraTailWords` account for the [ObjectTail](objects.md#objecttail) structure (RequiredObjectsCount, InterestKey, Destroyed, SendRate, Dummy).
 
-## ObjectFlags
-
-All creation paths accept `ObjectFlags` to configure behavior:
-
-```cpp
-struct ObjectFlags {
-    ObjectSettingsFlags SettingsFlags;   // OwnerLeavesOwnerToNone, IsGlobalInstance
-    ObjectOwnerModes    OwnerMode;      // Transaction, Dynamic, MasterClient
-    ObjectInterestModes InterestMode;   // All, Area, Assigned
-};
-```
-
-See [Ownership](ownership.md) for owner modes and [Area of Interest](aoi.md) for interest modes.
-
-## ObjectSpecialFlags
-
-Sub-objects support additional flags:
-
-```cpp
-enum class ObjectSpecialFlags : uint8_t {
-    None                        = 0,
-    IsRootTransform             = 1 << 1,
-    IgnoreRootTransformProperties = 1 << 2,
-};
-```
-
-## Finding Objects
-
-```cpp
-Object*     Client::FindObject(ObjectId id) const;       // Any object (root or child)
-ObjectRoot* Client::FindObjectRoot(ObjectId id) const;    // Root objects only
-
-// All objects (including children)
-std::unordered_map<ObjectId, Object*>& Client::AllObjects();
-
-// Root objects only
-std::unordered_map<ObjectId, ObjectRoot*>& Client::AllRootObjects();
-```
-
-## TypeRef
-
-Every object carries a `TypeRef` used for type identification and buffer sizing:
+## TypeRef Convention
 
 ```cpp
 struct TypeRef {
@@ -239,12 +230,48 @@ struct TypeRef {
 };
 ```
 
-The `WordCount` must include `Object::ExtraTailWords` (6 words for `ObjectTail`). The `Hash` must match between creator and consumer for remote instantiation to succeed.
+The `Hash` must match between creator and consumer for remote instantiation to succeed. The `WordCount` should equal the `words` parameter passed to the creation method.
 
-## See Also
+## Activation Pattern
 
-- [Objects](objects.md) -- Object hierarchy and Words buffer layout
-- [Ownership](ownership.md) -- Owner modes and authority transfer
+After creating an object and writing initial state:
+
+```cpp
+// Pause sending during initial population
+obj->SetSendUpdates(false);
+
+// Write all initial properties via memcpy into Words buffer
+populate_words(obj);
+
+// Resume sending and mark data as valid
+obj->SetSendUpdates(true);
+obj->SetHasValidData(true);
+```
+
+This prevents the SDK from sending a partially-populated object. The `SetSendUpdates(false)` call ensures no outgoing packet includes this object until all properties are written.
+
+## Required Objects
+
+The `requiredObjectsCount` parameter specifies how many other objects must be present before the `OnObjectReady` callback fires. Required object IDs are stored in the [ObjectTail](objects.md#objecttail) at the end of the Words buffer, just before the standard tail fields.
+
+```cpp
+// Query required objects
+int32_t count = root->RequiredObjectsCount();
+ObjectId* ids = root->RequiredObjects();
+bool isReq = root->IsRequired(someId);
+```
+
+The total word count must account for required objects:
+
+```cpp
+size_t total = user_words + Object::ExtraTailWords;
+// requiredObjectsCount is passed separately, not added to word count
+```
+
+## Related
+
+- [Objects](objects.md) -- Object hierarchy, Words buffer layout, ObjectTail
+- [Ownership](ownership.md) -- ObjectOwnerModes and authority transfer
 - [Serialization](serialization.md) -- Words buffer and type-to-word mapping
 - [Scene Management](scene-management.md) -- Scene sequences and `ChangeScene()`
-- [Client API Reference](../reference/client-api.md) -- Full method reference
+- [String Heap](string-heap.md) -- Spawn data exception for strings

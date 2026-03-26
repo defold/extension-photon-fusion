@@ -10,31 +10,6 @@
 #include "StringHeap.h"
 
 namespace SharedMode {
-    struct AOILocation {
-        int32_t X{0};
-        int32_t Y{0};
-        int32_t Z{0};
-
-        AOILocation() = default;
-
-        AOILocation(const int32_t x, const int32_t y, const int32_t z) : X(x), Y(y), Z(z) {
-        }
-
-        AOILocation GetNeighbour(int32_t xOffset = 0, int32_t yOffset = 0, int32_t zOffset = 0);
-    };
-
-    struct InterestBox {
-        AOILocation Center{};
-        AOILocation Extents{};
-
-        InterestBox() = default;
-
-        InterestBox(const AOILocation center, const AOILocation extents) {
-            Center = center;
-            Extents = extents;
-        }
-    };
-
     constexpr int32_t OBJECT_STATUS_NEW = 0;
     constexpr int32_t OBJECT_STATUS_PENDING = 1;
     constexpr int32_t OBJECT_STATUS_CREATED = 2;
@@ -42,6 +17,9 @@ namespace SharedMode {
     constexpr uint8_t OBJECT_SENDFLAG_CREATE = 1;
     constexpr uint8_t OBJECT_SENDFLAG_STRINGHEAP_ENTRIES_CHANGE = 2;
     constexpr uint8_t OBJECT_SENDFLAG_STRINGHEAP_DATA_CHANGE = 4;
+    constexpr uint8_t OBJECT_SENDFLAG_IN_INTEREST_SET = 8;
+    constexpr uint8_t OBJECT_SENDFLAG_IS_SUBOBJECT = 16;
+    constexpr uint8_t OBJECT_SENDFLAG_TIMEONLY = 32;
 
     constexpr uint64_t RPC_InternalMinId = 1;
     constexpr uint64_t RPC_InternalMaxId = 1023;
@@ -79,40 +57,12 @@ namespace SharedMode {
         static void Write(WriteBuffer &writer, const Rpc &rpc);
     };
 
-    enum class ObjectSettingsFlags : uint8_t {
-        None = 0,
-        OwnerLeavesOwnerToNone = 1 << 0,
-        IsGlobalInstance = 1 << 1,
-    };
-
-    inline ObjectSettingsFlags operator~(ObjectSettingsFlags operand) {
-        return static_cast<ObjectSettingsFlags>(~static_cast<uint8_t>(operand));
-    }
-
-    inline ObjectSettingsFlags operator&(ObjectSettingsFlags lhs, ObjectSettingsFlags rhs) {
-        return static_cast<ObjectSettingsFlags>(static_cast<uint8_t>(lhs) & static_cast<uint8_t>(rhs));
-    }
-
-    inline ObjectSettingsFlags operator|(ObjectSettingsFlags lhs, ObjectSettingsFlags rhs) {
-        return static_cast<ObjectSettingsFlags>(static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
-    }
-
-    inline ObjectSettingsFlags& operator|=(ObjectSettingsFlags& lhs, ObjectSettingsFlags rhs)
-    {
-        lhs = lhs | rhs;
-        return lhs;
-    }
-
-    enum class ObjectInterestModes : uint8_t {
-        All = 0,
-        Area = 1,
-        Assigned = 2,
-    };
-
     enum class ObjectOwnerModes : uint8_t {
         Transaction = 0,
-        Dynamic = 1,
-        MasterClient = 2,
+        PlayerAttached = 1,
+        Dynamic = 2,
+        MasterClient = 3,
+        GameGlobal = 4,
     };
 
     enum class ObjectOwnerIntent : uint8_t {
@@ -146,59 +96,29 @@ namespace SharedMode {
         return a;
     }
 
-    struct ObjectFlags {
-        union {
-            uint32_t _packed;
-
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4201)
-#endif
-
-            struct {
-                ObjectSettingsFlags SettingsFlags;
-                ObjectOwnerModes OwnerMode;
-                ObjectInterestModes InterestMode;
-            };
-
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-
-        };
-
-        explicit ObjectFlags(uint32_t packed);
-
-        ObjectFlags(const ObjectSettingsFlags settings, const ObjectOwnerModes owner,
-                    const ObjectInterestModes interest): _packed(0) {
-            SettingsFlags = settings;
-            OwnerMode = owner;
-            InterestMode = interest;
-        }
-
-        static ObjectFlags Read(ReadBuffer &reader);
-
-        static void Write(WriteBuffer &writer, const ObjectFlags &rpc);
-    };
-
+#pragma pack(push, 4)
     struct ObjectTail {
-        int32_t AOI_X;
-        int32_t AOI_Y;
-        int32_t AOI_Z;
-        int32_t AOI_SET;
+        int32_t RequiredObjectsCount;
+        uint64_t InterestKey;
         int32_t Destroyed;
+        int32_t SendRate;
         int32_t Dummy;
     };
+    #pragma pack(pop)
 
     static_assert(std::is_trivially_copyable<ObjectTail>());
-    static_assert(alignof(ObjectTail) == 4);
     static_assert(sizeof(ObjectTail) == 24);
-    static_assert(offsetof(ObjectTail, AOI_X) == 0);
-    static_assert(offsetof(ObjectTail, AOI_Y) == 4);
-    static_assert(offsetof(ObjectTail, AOI_Z) == 8);
-    static_assert(offsetof(ObjectTail, AOI_SET) == 12);
-    static_assert(offsetof(ObjectTail, Destroyed) == 16);
+    static_assert(offsetof(ObjectTail, RequiredObjectsCount) == 0);
+    static_assert(offsetof(ObjectTail, InterestKey) == 4);
+    static_assert(offsetof(ObjectTail, Destroyed) == 12);
+    static_assert(offsetof(ObjectTail, SendRate) == 16);
     static_assert(offsetof(ObjectTail, Dummy) == 20);
+
+    enum class InterestKeyType : uint8_t {
+        Global = 0,
+        Area = 1,
+        User = 2
+    };
 
     enum class ObjectType : uint8_t {
         Base = 1,
@@ -221,6 +141,10 @@ namespace SharedMode {
         bool CreatedLocal{false};
         bool ReceivedPluginUpdate{false};
         bool SendUpdates{true};
+        bool InterestKeySet{false};
+
+        uint32_t BytesSentLastFrame{0};
+        uint32_t BytesReceivedLastFrame{0};
 
         BufferT<Tick> Ticks{};
 
@@ -245,9 +169,36 @@ namespace SharedMode {
         BufferT<Word> Words{};
 
         ObjectSpecialFlags SpecialFlags{};
+        uint8_t SendFlags{0};
 
+        Tick RemoteTickSent{0};
+        Tick RemoteTickAcked{0};
+
+        int32_t Status{0};
+
+        NetworkedStringHeap StringHeap{1024};
 
         virtual ~Object() = default;
+
+        [[nodiscard]] uint32_t GetBytesSendLastTick() const {return BytesSentLastFrame; }
+        [[nodiscard]] uint32_t GetBytesReceivedLastTick() const {return BytesReceivedLastFrame; }
+
+        void ResetReceivedBytes()
+        {
+            BytesReceivedLastFrame = 0;
+        }
+
+        [[nodiscard]] uint32_t ConsumeBytesSendLastTick() {
+            auto result = BytesSentLastFrame;
+            BytesSentLastFrame = 0;
+            return result;
+        }
+
+        [[nodiscard]] uint32_t ConsumeBytesReceivedLastTick() {
+            auto result = BytesReceivedLastFrame;
+            BytesReceivedLastFrame = 0;
+            return result;
+        }
 
         void SetHasValidData(const bool hasValidData) { HasValidData = hasValidData; }
 
@@ -255,11 +206,13 @@ namespace SharedMode {
 
         virtual ObjectRoot *Root() = 0;
 
-        StringHandle AddString(const CharType *str);
+        StringHandle AddString(const PhotonCommon::CharType *str);
 
-        const CharType* ResolveString(const StringHandle& handle, StringMessage& OutStatus);
+        const PhotonCommon::CharType* ResolveString(const StringHandle& handle, StringMessage& OutStatus);
 
         StringHandle FreeString(const StringHandle &handle);
+
+        bool IsValidStringHandle(const StringHandle& handle);
 
         uint32_t GetStringLength(const StringHandle &handle);
 
@@ -270,8 +223,6 @@ namespace SharedMode {
     public:
         ObjectId Parent{0, 0};
         uint32_t TargetObjectHash{0};
-        int32_t SubObjectStatus{0};
-
         explicit ObjectChild(SharedMode::Client *client) : Object(client) {
             ObjectType = ObjectType::Child;
         }
@@ -315,26 +266,23 @@ namespace SharedMode {
 
         double Time{0};
         PlayerId Owner{0};
-        ObjectFlags Flags{0};
+        ObjectOwnerModes OwnerMode{};
         uint32_t Scene{0};
 
         ObjectOwnerIntent OwnerIntent{0};
         double OwnerIntentCooldown{0};
 
-        Tick RemoteTickSent{0};
-        Tick RemoteTickAcked{0};
-
-        int32_t Status{0};
         int32_t UpdatesReceived{0};
-        int32_t UpdatesInFlight{0};
+
+        bool SentThisFrame{false};
+
+        bool ObjectReady{false};
 
         int32_t PluginVersion{1};
         int32_t ClientVersion{1};
         int32_t ClientBaseVersion{0};
 
         std::vector<ObjectId> SubObjects{};
-
-        NetworkedStringHeap StringHeap{1024};
 
         static bool Is(const Object *obj) {
             return obj != nullptr && obj->ObjectType == ObjectType::Root;
@@ -355,6 +303,10 @@ namespace SharedMode {
 
             return nullptr;
         }
+
+        bool IsRequired(ObjectId id) const;
+        int32_t RequiredObjectsCount() const;
+        ObjectId *RequiredObjects() const;
 
         ObjectRoot *Root() override;
     };

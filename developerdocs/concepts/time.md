@@ -4,15 +4,30 @@ Fusion maintains a synchronized clock across all clients in a room. This clock i
 
 ## Time Model
 
-Each client tracks three internal values:
+Each client tracks several internal values to maintain clock synchronization:
+
+```
+Server Clock (authoritative)
+       |
+       |  time update packet
+       v
++-------------------------------+
+| _serverClock  (last received) |
+| _localClock   (accumulated dt)|
+| _timeDiff     (server - local)|
+| _serverClockScale  (rate adj) |
++-------------------------------+
+       |
+       v
+NetworkTime() = _localClock + _timeDiff
+```
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `_localClock` | `double` | Accumulated local time from `UpdateFrameBegin(dt)` calls |
 | `_serverClock` | `double` | Last received server time, smoothly adjusted |
 | `_timeDiff` | `double` | Offset: `_serverClock - _localClock` |
-
-When the server sends a time update, the SDK computes the difference between server time and local time. This offset (`_timeDiff`) is used to translate local clock readings into synchronized network time.
+| `_serverClockScale` | `double` | Rate multiplier for smooth convergence |
 
 ## Client API
 
@@ -25,6 +40,7 @@ double Client::NetworkTime() const;
 Returns the current synchronized network time in seconds. This is the primary time value for gameplay synchronization. All clients in the same room converge to approximately the same `NetworkTime()` value, accounting for their individual latencies.
 
 Use `NetworkTime()` for:
+
 - Synchronized game events (countdowns, round starts)
 - Interpolation timestamps
 - Time-based gameplay logic that must agree across clients
@@ -35,9 +51,13 @@ Use `NetworkTime()` for:
 double Client::NetworkTimeScale() const;
 ```
 
-Returns the current time scale factor. The SDK adjusts this to smoothly converge the local clock toward the server clock. Under normal conditions the scale is close to `1.0`. When the local clock is behind, the scale increases slightly (speeds up); when ahead, it decreases (slows down).
+Returns the current time scale factor. The SDK adjusts this to smoothly converge the local clock toward the server clock:
 
-The `_serverClockScale` internal field drives this value. Engine integrations can use it to scale gameplay speed in sync with the network clock, though this is optional.
+- Under normal conditions, the scale is close to `1.0`.
+- When the local clock is behind, the scale increases slightly (speeds up).
+- When the local clock is ahead, the scale decreases (slows down).
+
+Engine integrations can use this to scale gameplay speed in sync with the network clock, though this is optional.
 
 ### NetworkTimeDiff()
 
@@ -45,7 +65,7 @@ The `_serverClockScale` internal field drives this value. Engine integrations ca
 double Client::NetworkTimeDiff() const;
 ```
 
-Returns the raw offset between server time and local time (`_timeDiff`). A positive value means the server clock is ahead of the local clock. This is useful for diagnostics and latency estimation but is rarely needed in gameplay code.
+Returns the raw offset between server time and local time (`_timeDiff`). A positive value means the server clock is ahead of the local clock. Useful for diagnostics and latency estimation, but rarely needed in gameplay code.
 
 ### GetTime(obj)
 
@@ -53,9 +73,49 @@ Returns the raw offset between server time and local time (`_timeDiff`). A posit
 double Client::GetTime(const Object* obj);
 ```
 
-Returns the synchronized time for a specific object. For an `ObjectRoot`, this reads the `Time` field which is updated each frame by the SDK. The object's time may differ slightly from `NetworkTime()` due to per-object timing adjustments.
+Returns the synchronized time for a specific object. For an `ObjectRoot`, this reads the `Time` field which is updated each frame by the SDK when remote state arrives. The object's time may differ from `NetworkTime()` due to per-object timing from the authority client.
 
-The `ObjectRoot::Time` field is set during `UpdateFrameBegin()` when remote state updates arrive for that object.
+### Per-Object Time
+
+```cpp
+class ObjectRoot : public Object {
+public:
+    double Time;  // Network-synchronized time for this object
+};
+```
+
+This value is set during `UpdateFrameBegin()` when state updates arrive for the object. It represents the timestamp at which the authority client generated the state snapshot. Use this for per-object interpolation or extrapolation.
+
+## Tick Counters
+
+In addition to continuous time, the SDK maintains discrete tick counters:
+
+### GetSendTick()
+
+```cpp
+int Client::GetSendTick() const;
+```
+
+Returns the current outgoing tick counter (`_sendTick`). This is a monotonically increasing `uint32_t` that increments each time the SDK sends a state packet. Used internally for change detection and ack tracking.
+
+### GetReceivedCounter()
+
+```cpp
+int Client::GetReceivedCounter() const;
+```
+
+Returns the last received tick counter from the server (`_receiveCounter`). This tells you how many state updates the client has received total. Useful for detecting stalls or measuring update frequency.
+
+### Per-Object Ticks
+
+Each object tracks its own send/receive ticks:
+
+```cpp
+class Object {
+    Tick RemoteTickSent;    // Last tick we sent for this object
+    Tick RemoteTickAcked;   // Last tick the server acknowledged
+};
+```
 
 ## Time Encoding
 
@@ -82,40 +142,67 @@ double ReadBuffer::TimeBase();
 
 ## How Time Synchronization Works
 
-1. **Server sends time**: The Photon server periodically includes its authoritative clock in state packets.
-2. **SDK receives time**: During `UpdateFrameBegin()`, the SDK processes the server time via `ServerTimeReceived()`.
-3. **Offset computed**: The SDK calculates `_timeDiff = serverTime - _localClock`.
-4. **Smooth adjustment**: Rather than jumping to the server time, the SDK adjusts `_serverClockScale` to gradually converge the local clock. This prevents visible jitter in gameplay.
-5. **Local advancement**: Each `UpdateFrameBegin(dt)` call advances `_localClock` by `dt * scale`, keeping the synchronized clock moving smoothly.
+```
+1. Server sends time
+   Server --[authoritative clock]--> Client
 
-## Per-Object Time
+2. SDK receives time (during UpdateFrameBegin)
+   ServerTimeReceived(serverTime)
 
-Each `ObjectRoot` has a `Time` field:
+3. Offset computed
+   _timeDiff = serverTime - _localClock
 
-```cpp
-class ObjectRoot : public Object {
-public:
-    double Time;  // Network-synchronized time for this object
-    // ...
-};
+4. Smooth adjustment
+   _serverClockScale adjusted to converge gradually
+   (prevents visible jitter in gameplay)
+
+5. Local advancement (each frame)
+   _localClock += dt * _serverClockScale
 ```
 
-This value is updated when the SDK processes incoming state for the object. It represents the server time at which the state snapshot was generated by the authority client. Use this for per-object interpolation or extrapolation.
+The SDK never jumps the local clock to the server time directly. Instead, it adjusts the rate at which the local clock advances. This produces smooth, jitter-free time progression while still converging to the authoritative server clock.
 
-## Integration Guidelines
+## The dt Parameter
 
-- **Always pass real delta time** to `UpdateFrameBegin(dt)`. Using a fixed timestep or zero causes the internal clock to drift from the server.
-- **Do not cache NetworkTime()** across frames. Call it each frame to get the latest synchronized value.
-- **Use NetworkTime() for gameplay**, not wall-clock time. Wall-clock time diverges across clients due to frame rate differences and start-time offsets.
-- **GetRtt()** provides the round-trip time if you need latency information separately:
+The `dt` parameter to `UpdateFrameBegin(double dt)` is critical for time synchronization:
+
+```cpp
+// Correct: real elapsed time
+fusionClient->UpdateFrameBegin(delta_from_engine);
+
+// Incorrect: fixed timestep (unless truly fixed framerate)
+fusionClient->UpdateFrameBegin(1.0 / 60.0);  // Causes drift
+
+// Incorrect: zero
+fusionClient->UpdateFrameBegin(0.0);  // Time stops advancing
+```
+
+The SDK uses `dt` to advance `_localClock`. Inaccurate values cause the local clock to drift from the server, forcing larger rate corrections and potential gameplay issues.
+
+## RTT (Round-Trip Time)
 
 ```cpp
 double Client::GetRtt() const;
 ```
 
+Returns the round-trip time in seconds. This is the measured latency between the client and the Photon server. Useful for:
+
+- Displaying ping to the player
+- Adjusting interpolation buffer size
+- Compensating for network delay in gameplay
+
+## Integration Guidelines
+
+| Guideline | Rationale |
+|-----------|-----------|
+| Always pass real delta time to `UpdateFrameBegin()` | Prevents clock drift |
+| Do not cache `NetworkTime()` across frames | Value changes every frame |
+| Use `NetworkTime()` for gameplay, not wall-clock time | Wall-clock diverges across clients |
+| Use `GetTime(obj)` for per-object interpolation | More accurate than global time |
+| Use `GetSendTick()` for frame-level comparisons | Integer, no floating-point issues |
+
 ## Related
 
 - [Frame Loop](frame-loop.md) -- How `dt` feeds into time synchronization
 - [Objects](objects.md) -- `ObjectRoot::Time` field
-- [Client API](../reference/client-api.md) -- Full method reference
-- [Buffers API](../reference/buffers-api.md) -- Time encoding in ReadBuffer/WriteBuffer
+- [Serialization](serialization.md) -- Time encoding in ReadBuffer/WriteBuffer

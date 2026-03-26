@@ -8,10 +8,10 @@ RPCs in Fusion are fire-and-forget messages sent between clients. Unlike [state 
 class Rpc {
 public:
     uint64_t Id;                    // RPC identifier
-    RpcFlags Flags;                 // Delivery flags
+    RpcFlags Flags;                 // Delivery flags (opaque)
     PlayerId OriginPlayer;          // Sender
     PlayerId TargetPlayer;          // Recipient (0 = all)
-    ObjectId TargetObject;          // Target object (0,0 = broadcast)
+    ObjectId TargetObject;          // Target object ((0,0) = broadcast)
     uint16_t TargetComponent;       // Component index on target object
 
     uint64_t DescriptorTypeHash;    // Type descriptor hash for routing
@@ -28,10 +28,10 @@ public:
 | Field | Purpose |
 |-------|---------|
 | `Id` | Unique RPC identifier. IDs 1-1023 are reserved for SDK internal RPCs. User RPCs use IDs >= 1024. |
-| `TargetPlayer` | Specific player to receive the RPC. Use `0` for all players, or a `PlayerId` for targeted delivery. |
-| `TargetObject` | The networked object this RPC is addressed to. An `ObjectId(0,0)` indicates a broadcast RPC (not targeted at any object). |
-| `DescriptorTypeHash` | Hash identifying the type/class of the RPC handler. Used by the integration layer to route to the correct receiver. |
-| `EventHash` | Hash identifying the specific method to call. Combined with `DescriptorTypeHash`, uniquely identifies the RPC handler. |
+| `TargetPlayer` | Specific player to receive the RPC. `0` for all players, or a `PlayerId` for targeted delivery. |
+| `TargetObject` | The networked object this RPC is addressed to. `ObjectId(0,0)` indicates a broadcast RPC. |
+| `DescriptorTypeHash` | Hash identifying the type/class of the RPC handler. Used for routing to the correct receiver. |
+| `EventHash` | Hash identifying the specific method to call. Combined with `DescriptorTypeHash`, uniquely identifies the handler. |
 | `Bytes` | Opaque payload containing serialized arguments. |
 
 ## Creating and Sending RPCs
@@ -58,42 +58,58 @@ This constructs an `Rpc` struct with the local player as `OriginPlayer`. The `da
 bool Client::SendUserRpc(const Rpc& rpc);
 ```
 
-Queues the RPC for delivery. RPCs are batched and sent during the next `PacketQueue()` cycle (end of the frame update). Returns `true` if the RPC was accepted.
+Queues the RPC for delivery. RPCs are batched and sent during the next `UpdateFrameEnd()` cycle. Returns `true` if the RPC was accepted.
 
-### Example
+### Complete Example
 
 ```cpp
-// Serialize payload
+// 1. Serialize payload
 WriteBuffer payload;
 payload.Int(damageAmount);
 payload.UIntVar(targetEntityId);
 Data payloadData = payload.Take();
 
-// Create and send
+// 2. Create the RPC
 Rpc rpc = client->CreateUserRpc(
-    1024,                           // User RPC ID
-    0,                              // All players
-    targetObjectId,                 // Object-targeted
-    CRC64("DamageHandler"),         // Type hash
-    CRC64("OnDamage"),              // Method hash
+    1024,                                         // User RPC ID
+    0,                                            // All players
+    targetObjectId,                               // Object-targeted
+    CRC64("DamageHandler", strlen("DamageHandler")),  // Type hash
+    CRC64("OnDamage", strlen("OnDamage")),            // Method hash
     reinterpret_cast<const char*>(payloadData.Ptr),
     payloadData.Length
 );
+
+// 3. Send
 client->SendUserRpc(rpc);
+
+// 4. Clean up payload
+payloadData.Free();
 ```
 
 ## Receiving RPCs
 
-All incoming RPCs (both user and internal) arrive through a single callback:
+All incoming RPCs arrive through a single broadcaster:
 
 ```cpp
-std::function<void(Rpc&)> OnRpc;
+Broadcaster<void(Rpc&)> OnRpc;
 ```
 
-The integration layer routes based on `TargetObject`:
+Subscribe to receive RPCs:
 
-1. **Object-targeted** (`TargetObject` is not `(0,0)`): Look up the object in the registry, find its synchronizer/component, and dispatch using `DescriptorTypeHash` + `EventHash`.
-2. **Broadcast** (`TargetObject` is `(0,0)`): Deliver to all registered broadcast receivers.
+```cpp
+subs += client->OnRpc.Subscribe([](SharedMode::Rpc& rpc) {
+    if (rpc.IsInternal()) return;  // Skip SDK-internal RPCs
+
+    if (rpc.TargetObject.IsSome()) {
+        // Object-targeted RPC: route to the specific object
+        dispatch_to_object(rpc);
+    } else {
+        // Broadcast RPC: deliver to all registered receivers
+        dispatch_broadcast(rpc);
+    }
+});
+```
 
 ### Routing by Hashes
 
@@ -103,6 +119,35 @@ The integration layer routes based on `TargetObject`:
 - `EventHash` identifies the method within that type (e.g., `CRC64("on_damage_received")`).
 
 The integration layer computes these hashes at registration time and matches them against incoming RPCs.
+
+### Reading the Payload
+
+```cpp
+void handle_damage_rpc(SharedMode::Rpc& rpc) {
+    ReadBuffer reader(rpc.Bytes);
+    int32_t damage = reader.Int();
+    uint32_t entityId = reader.UIntVar();
+    // Apply damage...
+}
+```
+
+## ID Ranges
+
+| Range | Owner | Purpose |
+|-------|-------|---------|
+| 1 - 1023 | SDK internal | Scene change, object priority, etc. |
+| 1024+ | User | Application-defined RPCs |
+
+### Internal RPC Constants
+
+```cpp
+constexpr uint64_t RPC_InternalMinId         = 1;
+constexpr uint64_t RPC_InternalMaxId         = 1023;
+constexpr uint64_t RPC_InternalSceneChange   = 1;    // Scene transition
+constexpr uint64_t RPC_InternalObjectPriority = 2;   // AOI priority
+```
+
+Internal RPCs are processed by the SDK before reaching `OnRpc`. The `IsInternal()` method identifies them. User code should never send RPCs with IDs in the internal range.
 
 ## Target Filtering
 
@@ -119,29 +164,8 @@ The integration layer computes these hashes at registration time and matches the
 
 | TargetObject Value | Behavior |
 |-------------------|----------|
-| `ObjectId(0, 0)` | Broadcast RPC -- not object-targeted |
-| Valid `ObjectId` | Delivered to the specific networked object |
-
-## Internal RPCs
-
-RPC IDs 1 through 1023 are reserved for SDK internal use:
-
-```cpp
-constexpr uint64_t RPC_InternalMinId     = 1;
-constexpr uint64_t RPC_InternalMaxId     = 1023;
-constexpr uint64_t RPC_InternalSceneChange   = 1;   // Scene transition notification
-constexpr uint64_t RPC_InternalObjectPriority = 2;  // AOI priority update
-```
-
-Internal RPCs are processed by the SDK before reaching `OnRpc`. The `IsInternal()` method identifies them:
-
-```cpp
-bool Rpc::IsInternal() const {
-    return Id >= RPC_InternalMinId && Id <= RPC_InternalMaxId;
-}
-```
-
-User code should never send RPCs with IDs in the internal range.
+| `ObjectId(0, 0)` (.IsNone()) | Broadcast RPC -- not object-targeted |
+| Valid `ObjectId` (.IsSome()) | Delivered to the specific networked object |
 
 ## RpcFlags
 
@@ -154,33 +178,40 @@ struct RpcFlags {
 };
 ```
 
-Flags are packed into a single `uint32_t` and serialized/deserialized via the buffer helpers. The flag values control delivery semantics (reliable vs. unreliable, etc.).
+Flags are packed into a single `uint32_t` and serialized/deserialized via the buffer helpers. The flag values are opaque to user code -- they control internal delivery semantics.
 
-## Serialization and Deserialization
+## Rpc Wire Format
 
-RPC payloads are serialized into the `Bytes` field using `ReadBuffer`/`WriteBuffer` or a custom serialization format. The SDK does not interpret payload contents -- it passes `Bytes` through as-is. The integration layer is responsible for:
-
-1. **Serializing** arguments into a byte array before `CreateUserRpc`.
-2. **Deserializing** `Bytes` back into arguments in the `OnRpc` handler.
-
-### Rpc Wire Format
-
-The `Rpc` struct itself has built-in serialization:
+The `Rpc` struct has built-in serialization for the SDK's packet protocol:
 
 ```cpp
 static Rpc  Rpc::Read(ReadBuffer& reader);
 static void Rpc::Write(WriteBuffer& writer, const Rpc& rpc);
 ```
 
-These are used internally by the SDK for packet construction and parsing.
+These are used internally by the SDK for packet construction and parsing. User code does not need to call them directly.
 
 ## Delivery Guarantees
 
-RPCs are sent through Fusion's Notify protocol, which provides ordered, reliable delivery with acknowledgment tracking. Lost packets are detected and retransmitted. The `PacketLost` and `PacketDelivered` callbacks on the `Client` track delivery status for sent packets.
+RPCs are sent through Fusion's Notify protocol, which provides ordered, reliable delivery with acknowledgment tracking. Lost packets are detected and retransmitted. This means:
 
-## See Also
+- RPCs are guaranteed to arrive (eventually).
+- RPCs from the same sender arrive in order.
+- Duplicate delivery does not occur.
+
+## Common Mistakes
+
+| Mistake | Symptom |
+|---------|---------|
+| Using RPC ID < 1024 | Conflicts with SDK internal RPCs |
+| Not checking `IsInternal()` | Processing SDK-internal RPCs as user RPCs |
+| Sending RPCs before `IsRunning()` | RPCs silently dropped |
+| Not freeing payload `Data` after `Take()` | Memory leak |
+| Mismatched read/write order in payload | Corrupted arguments |
+
+## Related
 
 - [Serialization](serialization.md) -- ReadBuffer/WriteBuffer for payload encoding
-- [Architecture](architecture.md) -- Frame loop and packet queue timing
+- [Architecture](architecture.md) -- CRC64 for hash generation
 - [Scene Management](scene-management.md) -- Scene change uses internal RPC
-- [Client API Reference](../reference/client-api.md) -- Full `CreateUserRpc` / `SendUserRpc` signatures
+- [Frame Loop](frame-loop.md) -- When RPCs are sent and received
