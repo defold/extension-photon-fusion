@@ -2,10 +2,6 @@ go.property("factory", msg.url())
 go.property("remote_object", false)
 go.property("is_scene_object", false)
 
-go.property("ownermode_transaction", false)
-go.property("ownermode_dynamic", false)
-go.property("ownermode_masterclient", true)
-
 go.property("settings_none", true)
 go.property("settings_owner_leaves_owner_to_none", false)
 go.property("settings_global_instance", false)
@@ -35,11 +31,13 @@ function on_message(self, message_id, message, sender)
 		print("on_message register_object", go.get_id())
 		local scene = 0
 
-		local owner_mode = fusion.OWNERMODE_MASTERCLIENT
-		if self.ownermode_transaction  then owner_mode = fusion.OWNERMODE_TRANSACTION end
-		if self.ownermode_dynamic      then owner_mode = fusion.OWNERMODE_DYNAMIC end
-		if self.ownermode_masterclient then owner_mode = fusion.OWNERMODE_MASTERCLIENT end
-
+		local owner_mode
+		if fusion.is_master_client() then
+			owner_mode = fusion.OWNERMODE_MASTERCLIENT
+		else
+			owner_mode = fusion.OWNERMODE_TRANSACTION
+		end
+			
 		if self.is_scene_object then
 			print("calling fusion.register_scene_object()", go.get_id())
 			fusion.register_scene_object(go.get_id(), scene, self.factory, options)
