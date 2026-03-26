@@ -1337,6 +1337,40 @@ static int JoinRandomOrCreateRoom(lua_State* L)
     return 0;
 }
 
+/** Join random room
+ * @name join_room_random
+ * @table matchmaking_options
+ */
+static int JoinRandomRoom(lua_State* L)
+{
+    dmLogInfo("JoinRandomRoom");
+
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+    if (!g_Ctx->m_FusionClient->GetRealtimeClient().IsConnected())
+    {
+        luaL_error(L, "Fusion is not connected");
+        return 0;
+    }
+    if (g_Ctx->m_FusionClient->GetRealtimeClient().IsInRoom())
+    {
+        luaL_error(L, "Fusion is already in room");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    PhotonMatchmaking::MatchmakingOptions matchmakingOptions = CreateMatchmakingOptions(L, 1);
+
+    dmLogInfo("JoinRandomRoom");
+    g_Ctx->m_FusionClient->GetRealtimeClient().JoinRandomRoom(matchmakingOptions);
+
+    return 0;
+}
+
 /** Join room
  * @name join_room
  * @string room_name
@@ -2087,6 +2121,7 @@ static const luaL_reg Module_methods[] = {
     // room handling
     { "join_room", JoinRoom },
     { "join_or_create_room", JoinOrCreateRoom },
+    { "join_room_random", JoinRandomRoom },
     { "join_or_create_room_random", JoinRandomOrCreateRoom },
 
 

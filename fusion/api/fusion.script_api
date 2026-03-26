@@ -79,6 +79,14 @@
     - name: matchmaking_options
       type: table
 
+  - name: join_room_random
+    type: function
+    desc: |
+      Join random room.
+    parameters:
+    - name: matchmaking_options
+      type: table
+
   - name: join_room
     type: function
     desc: |
