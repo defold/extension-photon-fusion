@@ -1303,6 +1303,8 @@ static PhotonMatchmaking::JoinRoomOptions CreateJoinRoomOptions(lua_State* L, in
 /** Join or create random room
  * @name join_or_create_room_random
  * @string room_name
+ * @table create_room_options
+ * @table matchmaking_options
  */
 static int JoinRandomOrCreateRoom(lua_State* L)
 {
@@ -1338,6 +1340,7 @@ static int JoinRandomOrCreateRoom(lua_State* L)
 /** Join room
  * @name join_room
  * @string room_name
+ * @table join_room_options
  */
 static int JoinRoom(lua_State* L)
 {
