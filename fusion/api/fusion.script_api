@@ -74,6 +74,10 @@
     parameters:
     - name: room_name
       type: string
+    - name: create_room_options
+      type: table
+    - name: matchmaking_options
+      type: table
 
   - name: join_room
     type: function
@@ -82,6 +86,8 @@
     parameters:
     - name: room_name
       type: string
+    - name: join_room_options
+      type: table
 
   - name: join_or_create_room
     type: function
@@ -90,6 +96,10 @@
     parameters:
     - name: room_name
       type: string
+    - name: create_room_options
+      type: table
+    - name: join_room_options
+      type: table
 
   - name: is_connected
     type: function
@@ -115,7 +125,7 @@
     - name: in_room
       type: boolean
 
-  - name: enable_debugging
+  - name: enable_debug
     type: function
     desc: |
       Enable/disable debugging.
@@ -482,3 +492,4 @@
     type: number
     desc: |
       DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT
+
