@@ -75,6 +75,14 @@
     - name: room_name
       type: string
 
+  - name: join_room
+    type: function
+    desc: |
+      Join room.
+    parameters:
+    - name: room_name
+      type: string
+
   - name: is_connected
     type: function
     desc: |
@@ -466,4 +474,3 @@
     type: number
     desc: |
       DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT
-
