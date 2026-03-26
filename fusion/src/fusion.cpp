@@ -559,18 +559,18 @@ static void Fusion_OnObjectPredictionOverride(SharedMode::ObjectRoot* obj)
     dmLogInfo("Fusion_OnObjectPredictionOverride");
     CallListener(dmHashString64("OnObjectPredictionOverride"));
 }
-// static void Fusion_OnRoomJoin()
-// {
-//     dmLogInfo("Fusion_OnRoomJoin local player: %d", g_Ctx->m_FusionClient->LocalPlayerId());
-//     const char* name = g_Ctx->m_FusionClient->Photon().LoadBalancingClient().getCurrentlyJoinedRoom().getName().UTF8Representation().cstr();
-//     dmLogInfo("%s", name);
-//     CallListener(dmHashString64("OnRoomJoin"), name);
-// }
-// static void Fusion_OnRoomLeave()
-// {
-//     dmLogInfo("Fusion_OnRoomLeave");
-//     CallListener(dmHashString64("OnRoomLeave"));
-// }
+static void Fusion_OnRoomJoined()
+{
+    dmLogInfo("Fusion_OnRoomJoined local player: %d", g_Ctx->m_FusionClient->LocalPlayerId());
+    const char* name = (const char*)g_Ctx->m_FusionClient->GetRealtimeClient().GetCurrentRoom()->GetName().c_str();
+    dmLogInfo("%s", name);
+    CallListener(dmHashString64("OnRoomJoined"), name);
+}
+static void Fusion_OnRoomLeft()
+{
+    dmLogInfo("Fusion_OnRoomLeft");
+    CallListener(dmHashString64("OnRoomLeft"));
+}
 static void Fusion_OnRpc(SharedMode::Rpc& rpc)
 {
     dmLogInfo("Fusion_OnRpc");
@@ -963,6 +963,8 @@ static int Init(lua_State* L)
     g_Ctx->m_FusionClient->OnObjectOwnerChanged.Subscribe(Fusion_OnObjectOwnerChanged);
     g_Ctx->m_FusionClient->OnObjectPredictionOverride.Subscribe(Fusion_OnObjectPredictionOverride);
     g_Ctx->m_FusionClient->OnDestroyedMapActor.Subscribe(Fusion_OnDestroyedMapActor);
+    g_Ctx->m_FusionClient->GetRealtimeClient().OnRoomJoined.Subscribe(Fusion_OnRoomJoined);
+    g_Ctx->m_FusionClient->GetRealtimeClient().OnRoomLeft.Subscribe(Fusion_OnRoomLeft);
 
     g_Ctx->m_FusionDefoldLogOutput = new FusionDefoldLogOutput();
 
@@ -1175,6 +1177,129 @@ static int GetDisconnectCause(lua_State* L)
     return 1;
 }
 
+
+
+static void LuaTableToStdStringVector(lua_State* L, int index, std::vector<PhotonCommon::StringType>& v)
+{
+    if (lua_type(L, index) == LUA_TTABLE)
+    {
+        size_t len = lua_objlen(L, index);
+        for (int i = 0; i < len; i++)
+        {
+            lua_pushinteger(L, i + 1);
+            lua_gettable(L, index);
+            const char* s = luaL_checkstring(L, -1);
+            v[i] = PhotonCommon::StringType((char8_t*)s);
+            lua_pop(L, -1); // pop value
+        }
+    }
+}
+
+static PhotonMatchmaking::CreateRoomOptions CreateRoomOptions(lua_State* L, int index)
+{
+    PhotonMatchmaking::CreateRoomOptions options = PhotonMatchmaking::CreateRoomOptions();
+    if (lua_type(L, index) == LUA_TTABLE)
+    {
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0)
+        {
+            const char* key = luaL_checkstring(L, -2);
+            if (strcmp("is_visible", key) == 0)
+            {
+                options.isVisible = lua_toboolean(L, -1);
+            }
+            else if (strcmp("is_open", key) == 0)
+            {
+                options.isOpen = lua_toboolean(L, -1);
+            }
+            else if (strcmp("max_players", key) == 0)
+            {
+                options.maxPlayers = lua_tonumber(L, -1);
+            }
+            else if (strcmp("lobby_name", key) == 0)
+            {
+                options.lobbyName = (const PhotonCommon::CharType*)lua_tostring(L, -1);
+            }
+            else if (strcmp("expected_users", key) == 0)
+            {
+                LuaTableToStdStringVector(L, -1, options.expectedUsers);
+            }
+            else if (strcmp("lobby_properties", key) == 0)
+            {
+                LuaTableToStdStringVector(L, -1, options.lobbyProperties);
+            }
+            else
+            {
+                dmLogInfo("Unknown room option %s", key);
+            }
+            lua_pop(L, -1); // pop value
+        }
+    }
+    return options;
+}
+
+static PhotonMatchmaking::MatchmakingOptions CreateMatchmakingOptions(lua_State* L, int index)
+{
+    PhotonMatchmaking::MatchmakingOptions options = PhotonMatchmaking::MatchmakingOptions();
+    if (lua_type(L, index) == LUA_TTABLE)
+    {
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0)
+        {
+            const char* key = luaL_checkstring(L, -2);
+            if (strcmp("max_players", key) == 0)
+            {
+                options.maxPlayers = lua_tonumber(L, -1);
+            }
+            else if (strcmp("lobby_name", key) == 0)
+            {
+                options.lobbyName = (const PhotonCommon::CharType*)lua_tostring(L, -1);
+            }
+            else if (strcmp("expected_users", key) == 0)
+            {
+                LuaTableToStdStringVector(L, -1, options.expectedUsers);
+            }
+            else
+            {
+                dmLogInfo("Unknown matchmaking option %s", key);
+            }
+            lua_pop(L, -1); // pop value
+        }
+    }
+    return options;
+}
+
+static PhotonMatchmaking::JoinRoomOptions CreateJoinRoomOptions(lua_State* L, int index)
+{
+    PhotonMatchmaking::JoinRoomOptions options = PhotonMatchmaking::JoinRoomOptions();
+    if (lua_type(L, index) == LUA_TTABLE)
+    {
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0)
+        {
+            const char* key = luaL_checkstring(L, -2);
+            if (strcmp("rejoin", key) == 0)
+            {
+                options.rejoin = lua_toboolean(L, -1);
+            }
+            else if (strcmp("cache_slice_index", key) == 0)
+            {
+                options.cacheSliceIndex = lua_tonumber(L, -1);
+            }
+            else if (strcmp("expected_users", key) == 0)
+            {
+                LuaTableToStdStringVector(L, -1, options.expectedUsers);
+            }
+            else
+            {
+                dmLogInfo("Unknown matchmaking option %s", key);
+            }
+            lua_pop(L, -1); // pop value
+        }
+    }
+    return options;
+}
+
 /** Join or create random room
  * @name join_or_create_room_random
  * @string room_name
@@ -1201,59 +1326,8 @@ static int JoinRandomOrCreateRoom(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 0);
 
-    PhotonMatchmaking::CreateRoomOptions roomOptions = PhotonMatchmaking::CreateRoomOptions();
-    if (lua_type(L, 1) == LUA_TTABLE)
-    {
-        lua_pushnil(L);
-        while (lua_next(L, 1) != 0)
-        {
-            const char* key = luaL_checkstring(L, -2);
-            if (strcmp("is_visible", key) == 0)
-            {
-                roomOptions.isVisible = lua_toboolean(L, -1);
-            }
-            else if (strcmp("is_open", key) == 0)
-            {
-                roomOptions.isOpen = lua_toboolean(L, -1);
-            }
-            else if (strcmp("max_players", key) == 0)
-            {
-                roomOptions.maxPlayers = lua_tonumber(L, -1);
-            }
-            else if (strcmp("lobby_name", key) == 0)
-            {
-                roomOptions.lobbyName = (const PhotonCommon::CharType*)lua_tostring(L, -1);
-            }
-            else
-            {
-                dmLogInfo("Unknown room option %s", key);
-            }
-            lua_pop(L, -1); // pop value
-        }
-    }
-
-    PhotonMatchmaking::MatchmakingOptions matchmakingOptions = PhotonMatchmaking::MatchmakingOptions();
-    if (lua_type(L, 2) == LUA_TTABLE)
-    {
-        lua_pushnil(L);
-        while (lua_next(L, 2) != 0)
-        {
-            const char* key = luaL_checkstring(L, -2);
-            if (strcmp("max_players", key) == 0)
-            {
-                matchmakingOptions.maxPlayers = lua_tonumber(L, -1);
-            }
-            else if (strcmp("lobby_name", key) == 0)
-            {
-                matchmakingOptions.lobbyName = (const PhotonCommon::CharType*)lua_tostring(L, -1);
-            }
-            else
-            {
-                dmLogInfo("Unknown matchmaking option %s", key);
-            }
-            lua_pop(L, -1); // pop value
-        }
-    }
+    PhotonMatchmaking::CreateRoomOptions roomOptions = CreateRoomOptions(L, 1);
+    PhotonMatchmaking::MatchmakingOptions matchmakingOptions = CreateMatchmakingOptions(L, 2);
 
     dmLogInfo("JoinRandomOrCreateRoom name = %s", (const char*)roomOptions.lobbyName.c_str());
     g_Ctx->m_FusionClient->GetRealtimeClient().JoinRandomOrCreateRoom(roomOptions, matchmakingOptions);
@@ -1934,7 +2008,10 @@ static const luaL_reg Module_methods[] = {
     { "get_state", GetState },
     { "get_disconnect_cause", GetDisconnectCause },
 
+    // room handling
     { "join_or_create_room_random", JoinRandomOrCreateRoom },
+
+
     { "enable_debug", EnableDebug },
     { "get_local_player_id", GetLocalPlayerId },
     { "player_count", PlayerCount },
