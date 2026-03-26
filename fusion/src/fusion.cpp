@@ -1509,7 +1509,7 @@ static int RegisterObject(lua_State* L)
         luaL_error(L, "Unable to create object");
         return 0;
     }
-
+    SerializeFusionObject(fusion_object);
 
     return 0;
 }
