@@ -30,3 +30,6 @@ clear_color_blue = 0.2
 type = 3D
 use_fixed_timestep = 1
 
+[fusion]
+app_id = 98c13f6b-d277-4a55-b9a9-24373e392d21
+

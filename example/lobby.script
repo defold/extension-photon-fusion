@@ -72,9 +72,7 @@ function init(self)
 	math.randomseed(os.time() + index)
 	pprint(fusion)
 	coroutine.wrap(function()
-		local appid = "98c13f6b-d277-4a55-b9a9-24373e392d21"
-		local appversion = "1.0"
-		fusion.init(appid, appversion)
+		fusion.init_from_settings()
 		fusion.enable_debug(true)
 		connect()
 		if index > 1 then

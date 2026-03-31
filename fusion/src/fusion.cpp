@@ -919,23 +919,9 @@ void Fusion_TickAfterFrameBegin(double dt)
  * Fusion Lua API functions
  *************************/
 
-/** Initialize Fusion
- * @name init
- * @string app_id
- * @string app_version
- */
-static int Init(lua_State* L)
+static void DoInit(lua_State* L, const char* appId, const char* appVersion)
 {
-    DM_LUA_STACK_CHECK(L, 0);
-
-    dmLogInfo("Init");
-
-    const char* appId = luaL_checkstring(L, 1);
-    const char* appVersion = luaL_checkstring(L, 2);
-
-
     g_Ctx->m_FusionObjects.SetCapacity(100, 100);
-
 
     if (g_Ctx->m_FusionClient)
     {
@@ -956,8 +942,6 @@ static int Init(lua_State* L)
     g_Ctx->m_FusionClient->OnSubObjectCreated.Subscribe(Fusion_OnSubObjectCreated);
     g_Ctx->m_FusionClient->OnObjectDestroyed.Subscribe(Fusion_OnObjectDestroyed);
     g_Ctx->m_FusionClient->OnSubObjectDestroyed.Subscribe(Fusion_OnSubObjectDestroyed);
-    //g_Ctx->m_FusionClient->OnRoomJoin.Subscribe(Fusion_OnRoomJoin);
-    //g_Ctx->m_FusionClient->OnRoomLeave.Subscribe(Fusion_OnRoomLeave);
     g_Ctx->m_FusionClient->OnRpc.Subscribe(Fusion_OnRpc);
     g_Ctx->m_FusionClient->OnSceneChange.Subscribe(Fusion_OnSceneChange);
     g_Ctx->m_FusionClient->OnObjectOwnerChanged.Subscribe(Fusion_OnObjectOwnerChanged);
@@ -976,14 +960,44 @@ static int Init(lua_State* L)
     g_Ctx->m_Collisionobjectc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("collisionobjectc"));
     g_Ctx->m_Particlefxc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("particlefxc"));
     g_Ctx->m_Labelc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("labelc"));
+}
 
-    // g_Ctx->m_FusionClient->Start();
+/** Initialize Fusion
+ * @name init
+ * @string app_id
+ * @string app_version
+ */
+static int Init(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 0);
+
+    dmLogInfo("Init");
+
+    const char* appId = luaL_checkstring(L, 1);
+    const char* appVersion = luaL_checkstring(L, 2);
+    DoInit(L, appId, appVersion);
+
+    return 0;
+}
+
+/** Initialize Fusion from game.project settings
+ * @name init_from_settings
+ */
+static int InitFromSettings(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 0);
+
+    dmLogInfo("InitFromSettings");
+
+    const char* appId = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "fusion.app_id", "");
+    const char* appVersion = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "fusion.app_id", "");
+    DoInit(L, appId, appVersion);
+
     return 0;
 }
 
 /** Connect Fusion
  * @name connect
- * @string region
  * @string user
  * @string server
  */
@@ -1007,28 +1021,22 @@ static int Connect(lua_State* L)
     PhotonMatchmaking::ConnectOptions connectOptions = PhotonMatchmaking::ConnectOptions();
     connectOptions.useBackgroundSendReceiveThread = false;
 
-    // const char* region = 0x0;
-    // if (lua_isstring(L, 1))
-    // {
-    //     region = luaL_checkstring(L, 1);
-    // }
-
     const char* username = 0x0;
-    if (lua_isstring(L, 2))
+    if (lua_isstring(L, 1))
     {
-        username = luaL_checkstring(L, 2);
+        username = luaL_checkstring(L, 1);
     }
     connectOptions.username = (const PhotonCommon::CharType*)username;
 
-    // const char* server = 0x0;
-    // if (lua_isstring(L, 3))
-    // {
-    //     server = luaL_checkstring(L, 3);
-    // }
-    // connectOptions.serverAddress = (const PhotonCommon::CharType*)server;
+    const char* region = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "fusion.default_region", "eu");
+    if (lua_isstring(L, 2))
+    {
+        region = luaL_checkstring(L, 2);
+    }
 
     // dmLogInfo("Calling Connect with user '%s' and server '%s'", userid, server);
     g_Ctx->m_FusionClient->GetRealtimeClient().Connect(connectOptions);
+    g_Ctx->m_FusionClient->GetRealtimeClient().SelectRegion(PhotonCommon::to_string_type((const PhotonCommon::CharType*)region));
 
     return 0;
 }
@@ -2110,6 +2118,7 @@ static int AreaOfInterestCellSize(lua_State* L)
 
 static const luaL_reg Module_methods[] = {
     { "init", Init },
+    { "init_from_settings", InitFromSettings },
     { "connect", Connect },
     { "disconnect", Disonnect },
     { "reconnect", Reconnect },
