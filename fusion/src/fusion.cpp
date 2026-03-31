@@ -69,6 +69,7 @@ struct FusionObject
     dmVMath::Point3          m_Position;
     dmVMath::Quat            m_Rotation;
     dmVMath::Vector3         m_Scale;
+    bool                     m_HasAuthority;
 };
 
 struct FusionCtx
@@ -319,8 +320,11 @@ static dmhash_t DeleteFusionObject(const SharedMode::ObjectRoot* object)
         return 0;
     }
     dmhash_t id = fusion_object->m_Id;
-    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
-    dmGameObject::Delete(g_Ctx->m_Collection, instance, true);
+    if (id != 0)
+    {
+        dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
+        dmGameObject::Delete(g_Ctx->m_Collection, instance, true);
+    }
     g_Ctx->m_FusionObjects.Erase(id);
     free(fusion_object);
     return id;
@@ -332,7 +336,7 @@ static void DeleteGameObject(dmhash_t id)
     dmGameObject::Delete(g_Ctx->m_Collection, instance, true);
 }
 
-static dmhash_t CreateGameObject(const SharedMode::ObjectRoot* object)
+static bool CreateGameObject(dmhash_t id, const SharedMode::ObjectRoot* object)
 {
     uint64_t socket;
     uint64_t path;
@@ -350,7 +354,7 @@ static dmhash_t CreateGameObject(const SharedMode::ObjectRoot* object)
     if (factory_go == 0)
     {
         dmLogError("Main collection does not have a game object named %s", dmHashReverseSafe64(path));
-        return 0;
+        return false;
     }
     dmGameSystem::HFactoryWorld world;
     dmGameSystem::HFactoryComponent factory;
@@ -359,7 +363,7 @@ static dmhash_t CreateGameObject(const SharedMode::ObjectRoot* object)
     if (dmGameObject::RESULT_OK != r)
     {
         dmLogError("Unable to get component %s", dmHashReverseSafe64(fragment));
-        return 0;
+        return false;
     }
 
     //
@@ -367,7 +371,6 @@ static dmhash_t CreateGameObject(const SharedMode::ObjectRoot* object)
     dmVMath::Point3 position = dmVMath::Point3(3.0, 0, 0);
     dmVMath::Quat rotation = dmVMath::Quat::identity();
     dmVMath::Vector3 scale = dmVMath::Vector3(1.0, 1.0, 1.0);
-    dmhash_t id = dmGameObject::CreateInstanceId();
     dmGameObject::HInstance instance;
 
     dmGameObject::PropertyContainerBuilderParams params;
@@ -384,16 +387,13 @@ static dmhash_t CreateGameObject(const SharedMode::ObjectRoot* object)
 
     dmGameObject::PropertyContainerDestroy(properties);
 
-    if (dmGameObject::RESULT_OK != r)
-    {
-        return 0;
-    }
-
-    return id;
+    return (dmGameObject::RESULT_OK == r);
 }
 
 static FusionObject* CreateFusionObject(dmhash_t id, SharedMode::ObjectRoot* object)
 {
+    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
+
     if (g_Ctx->m_FusionObjects.Full())
     {
         g_Ctx->m_FusionObjects.OffsetCapacity(100);
@@ -411,7 +411,22 @@ static FusionObject* CreateFusionObject(dmhash_t id, SharedMode::ObjectRoot* obj
     fusion_object->m_Rotation.setY(0.0);
     fusion_object->m_Rotation.setZ(0.0);
     fusion_object->m_Rotation.setW(0.0);
+    fusion_object->m_HasAuthority = (instance != 0);
+    // important to add object here before the game object is created
+    // we need to be able to query for instance has_authority() from a script
     g_Ctx->m_FusionObjects.Put(id, fusion_object);
+
+    if (!instance)
+    {
+        bool ok = CreateGameObject(id, object);
+        if (!ok)
+        {
+            g_Ctx->m_FusionObjects.Erase(id);
+            free(fusion_object);
+            return 0;
+        }
+    }
+
     return fusion_object;
 }
 
@@ -484,12 +499,7 @@ static void Fusion_OnObjectReady(SharedMode::ObjectRoot* object)
 {
     dmLogInfo("Fusion_OnObjectReady owner: %d local player: %d", object->Owner, g_Ctx->m_FusionClient->LocalPlayerId());
 
-    dmhash_t id = CreateGameObject(object);
-    if (!id)
-    {
-        return;
-    }
-
+    dmhash_t id = dmGameObject::CreateInstanceId();
     FusionObject* fusion_object = CreateFusionObject(id, object);
     if (fusion_object)
     {
@@ -639,20 +649,11 @@ void Fusion_OnDestroyedMapActor(SharedMode::ObjectId id)
 void Fusion_OnInterestEnter(SharedMode::ObjectRoot* object)
 {
     dmLogInfo("Fusion_OnInterestEnter");
-    dmhash_t id = CreateGameObject(object);
-    if (!id)
-    {
-        return;
-    }
-
+    dmhash_t id = dmGameObject::CreateInstanceId();
     FusionObject* fusion_object = CreateFusionObject(id, object);
     if (fusion_object)
     {
         CallListener(dmHashString64("OnInterestEnter"), fusion_object->m_Id);
-    }
-    else
-    {
-        DeleteGameObject(id);
     }
 }
 void Fusion_OnInterestExit(SharedMode::ObjectRoot* object)
@@ -2034,6 +2035,30 @@ static int IsMasterClient(lua_State* L)
 }
 
 /**
+ * Check if the current script belongs to a game object over which the client
+ * has authority. Use this to decide if user input should be handled or not.
+ * @name has_authority
+ * @treturn boolean authority Returns true if the calling script has authority
+ */
+static int HasAuthority(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 1);
+
+    dmGameObject::HInstance caller_instance = dmScript::CheckGOInstance(L);
+    dmhash_t id = dmGameObject::GetIdentifier(caller_instance);
+    FusionObject** object = g_Ctx->m_FusionObjects.Get(id);
+    lua_pushboolean(L, object ? (*object)->m_HasAuthority : true);
+
+    return 1;
+}
+
+/**
  * Get round trip time
  * @name get_rtt
  * @treturn number rtt Round trip time in seconds
@@ -2160,6 +2185,7 @@ static const luaL_reg Module_methods[] = {
     { "is_in_room", IsInRoom },
     // { "is_joining_or_in_room", IsJoiningOrInRoom },
     { "is_master_client", IsMasterClient },
+    { "has_authority", HasAuthority },
 
     // ownership
     { "get_owner", GetOwner },

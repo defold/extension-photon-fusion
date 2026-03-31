@@ -13,13 +13,16 @@
     - name: app_version
       type: string
 
+  - name: init_from_settings
+    type: function
+    desc: |
+      Initialize Fusion from game.project settings.
+
   - name: connect
     type: function
     desc: |
       Connect Fusion.
     parameters:
-    - name: region
-      type: string
     - name: user
       type: string
     - name: server
@@ -320,6 +323,17 @@
       type: boolean
       desc: |
         True if this client is the room's master
+        
+
+  - name: has_authority
+    type: function
+    desc: |
+      Check if the current script belongs to a game object over which the client has authority. Use this to decide if user input should be handled or not.
+    returns:
+    - name: authority
+      type: boolean
+      desc: |
+        Returns true if the calling script has authority
         
 
   - name: get_rtt

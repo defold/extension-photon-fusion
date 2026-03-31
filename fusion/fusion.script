@@ -12,16 +12,16 @@ go.property("interestmode_assigned", false)
 
 
 function init(self)
-	print("init", go.get_id(), self.remote_object, os.date())
+	print("init", go.get_id(), self.remote_object, os.date(), fusion.has_authority())
 	assert(go.exists(self.factory))
-	if not self.remote_object then
+	if not fusion.has_authority() then
 		msg.post("#", "register_object")
 	end
 end
 
 function final(self)
 	print("final", go.get_id())
-	if not self.remote_object then
+	if fusion.has_authority() then
 		fusion.destroy(go.get_id())
 	end
 end
