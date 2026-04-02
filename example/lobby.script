@@ -49,7 +49,22 @@ end
 local function join_room(name)
 	name = name or "foo"
 	log("join_room name: '%s'", name)
-	fusion.join_or_create_room_random(name)
+	local room_options = {
+		is_visible = true,
+		is_open = true,
+		max_players = 10,
+		lobby_name = name,
+		custom_properties = {
+			foo = "bar",
+			baz = 1,
+			boo = true
+		}
+	}
+	local matchmaking_options = {
+		max_players = 10,
+		lobby_name = name,
+	}
+	fusion.join_or_create_room_random(room_options, matchmaking_options)
 	wait_until(function()
 		return fusion.is_in_room()
 	end)

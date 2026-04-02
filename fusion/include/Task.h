@@ -17,7 +17,6 @@ namespace PhotonMatchmaking {
         struct promise_type {
             std::variant<std::monostate, T, std::exception_ptr> result;
             std::coroutine_handle<> continuation;
-            bool detached = false;
 
             Task get_return_object() {
                 return Task{handle_type::from_promise(*this)};
@@ -31,10 +30,6 @@ namespace PhotonMatchmaking {
                     std::coroutine_handle<> await_suspend(handle_type h) noexcept {
                         if (h.promise().continuation)
                             return h.promise().continuation;
-                        if (h.promise().detached) {
-                            h.destroy();
-                            return std::noop_coroutine();
-                        }
                         return std::noop_coroutine();
                     }
                     void await_resume() noexcept {}
@@ -71,24 +66,12 @@ namespace PhotonMatchmaking {
             return std::move(std::get<1>(r));
         }
 
-        ~Task() {
-            if (handle) {
-                if (handle.done())
-                    handle.destroy();
-                else
-                    handle.promise().detached = true;
-            }
-        }
+        ~Task() { if (handle) handle.destroy(); }
 
         Task(Task&& other) noexcept : handle(std::exchange(other.handle, nullptr)) {}
         Task& operator=(Task&& other) noexcept {
             if (this != &other) {
-                if (handle) {
-                    if (handle.done())
-                        handle.destroy();
-                    else
-                        handle.promise().detached = true;
-                }
+                if (handle) handle.destroy();
                 handle = std::exchange(other.handle, nullptr);
             }
             return *this;
@@ -111,7 +94,6 @@ namespace PhotonMatchmaking {
         struct promise_type {
             std::exception_ptr exception;
             std::coroutine_handle<> continuation;
-            bool detached = false;
 
             Task get_return_object() {
                 return Task{handle_type::from_promise(*this)};
@@ -125,10 +107,6 @@ namespace PhotonMatchmaking {
                     std::coroutine_handle<> await_suspend(handle_type h) noexcept {
                         if (h.promise().continuation)
                             return h.promise().continuation;
-                        if (h.promise().detached) {
-                            h.destroy();
-                            return std::noop_coroutine();
-                        }
                         return std::noop_coroutine();
                     }
                     void await_resume() noexcept {}
@@ -156,24 +134,12 @@ namespace PhotonMatchmaking {
 
         bool IsReady() const noexcept { return handle && handle.done(); }
 
-        ~Task() {
-            if (handle) {
-                if (handle.done())
-                    handle.destroy();
-                else
-                    handle.promise().detached = true;
-            }
-        }
+        ~Task() { if (handle) handle.destroy(); }
 
         Task(Task&& other) noexcept : handle(std::exchange(other.handle, nullptr)) {}
         Task& operator=(Task&& other) noexcept {
             if (this != &other) {
-                if (handle) {
-                    if (handle.done())
-                        handle.destroy();
-                    else
-                        handle.promise().detached = true;
-                }
+                if (handle) handle.destroy();
                 handle = std::exchange(other.handle, nullptr);
             }
             return *this;

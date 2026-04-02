@@ -1,4 +1,4 @@
-// Copyright Exit Games GmbH. All Rights Reserved.
+// Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
 #ifndef SHAREDCLIENT_GAME_H
 #define SHAREDCLIENT_GAME_H
@@ -202,12 +202,13 @@ namespace SharedMode {
 
 		ObjectOwnerModes SanitizeOwnerMode(ObjectOwnerModes ownerMode) const;
 
+		void SetLocalSendRate(Object *obj, uint32_t sendRate);
+
 		void SetWantOwner(Object *obj);
 
 		void SetDontWantOwner(Object *obj);
 
 		ObjectId GetNewObjectId();
-
 
 		void ClearOwnerCooldown(Object *obj);
 
@@ -219,6 +220,7 @@ namespace SharedMode {
 		PhotonCommon::Broadcaster<void(Rpc &)> OnRpc;
 		PhotonCommon::Broadcaster<void(uint32_t index, uint32_t sequence, Data &)> OnSceneChange;
 		PhotonCommon::Broadcaster<void(ObjectRoot *)> OnObjectOwnerChanged;
+		PhotonCommon::Broadcaster<void(ObjectRoot *)> OnOwnerWasGiven;
 		PhotonCommon::Broadcaster<void(ObjectRoot *)> OnObjectPredictionOverride;
 		PhotonCommon::Broadcaster<void(ObjectRoot *)> OnObjectReady;
 		PhotonCommon::Broadcaster<void(ObjectChild *)> OnSubObjectCreated;
@@ -226,7 +228,7 @@ namespace SharedMode {
 		PhotonCommon::Broadcaster<void(ObjectChild *, DestroyModes)> OnSubObjectDestroyed;
 		PhotonCommon::Broadcaster<void(ObjectRoot *)> OnInterestEnter;
 		PhotonCommon::Broadcaster<void(ObjectRoot *)> OnInterestExit;
-		PhotonCommon::Broadcaster<void(ObjectId)> OnDestroyedMapActor;
+		PhotonCommon::Broadcaster<void(uint32_t, ObjectId)> OnDestroyedMapActor;
 
 		explicit Client(PhotonMatchmaking::RealtimeClient& realtimeClient);
 
@@ -294,13 +296,13 @@ namespace SharedMode {
 		Object* FindSubObjectWithHash(ObjectRoot* Root, uint32_t subObjectHash) const;
 
 		ObjectRoot *CreateSceneObject(bool &alreadyPopulated, size_t words, const TypeRef &type, const PhotonCommon::CharType* header,
-		                          size_t headerLength, uint32_t scene, uint32_t id, ObjectOwnerModes ownerMode, int32_t requiredObjectsCount = 0);
+		                          size_t headerLength, uint32_t scene, uint32_t id, ObjectOwnerModes ownerMode, ObjectSpecialFlags SpecialFlags, int32_t requiredObjectsCount = 0);
 
 		ObjectRoot *CreateGlobalInstanceObject(bool &alreadyPopulated, size_t words, const TypeRef &type, const PhotonCommon::CharType* header,
-						  size_t headerLength, uint32_t scene, uint32_t id, ObjectOwnerModes ownerMode, int32_t requiredObjectsCount = 0);
+						  size_t headerLength, uint32_t scene, uint32_t id, ObjectOwnerModes ownerMode, ObjectSpecialFlags SpecialFlags, int32_t requiredObjectsCount = 0);
 
 		ObjectRoot *CreateObject(size_t words, const TypeRef &type, const PhotonCommon::CharType* header,
-		                     size_t headerLength, uint32_t scene, ObjectOwnerModes ownerMode, int32_t requiredObjectsCount = 0);
+		                     size_t headerLength, uint32_t scene, ObjectOwnerModes ownerMode, ObjectSpecialFlags SpecialFlags, int32_t requiredObjectsCount = 0, ObjectId preconfiguredId = ObjectId());
 
 		ObjectChild *CreateSubObject(ObjectId parent, size_t words, const TypeRef &type, const PhotonCommon::CharType* header,
 		                        size_t headerLength, uint32_t targetObjectHash, ObjectId id, ObjectSpecialFlags SpecialFlags);

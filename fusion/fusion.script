@@ -1,5 +1,4 @@
 go.property("factory", msg.url())
-go.property("remote_object", false)
 go.property("is_scene_object", false)
 
 go.property("settings_none", true)
@@ -12,9 +11,9 @@ go.property("interestmode_assigned", false)
 
 
 function init(self)
-	print("init", go.get_id(), self.remote_object, os.date(), fusion.has_authority())
+	print("init", go.get_id(), os.date(), fusion.has_authority())
 	assert(go.exists(self.factory))
-	if not fusion.has_authority() then
+	if fusion.has_authority() then
 		msg.post("#", "register_object")
 	end
 end

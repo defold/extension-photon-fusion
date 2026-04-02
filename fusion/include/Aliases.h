@@ -1,4 +1,4 @@
-// Copyright Exit Games GmbH. All Rights Reserved.
+// Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
 #ifndef SHAREDCLIENT_ALIASES_H
 #define SHAREDCLIENT_ALIASES_H

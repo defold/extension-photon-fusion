@@ -1,4 +1,4 @@
-// Copyright Exit Games GmbH. All Rights Reserved.
+// Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
 #ifndef SHAREDCLIENT_NOTIFY_H
 #define SHAREDCLIENT_NOTIFY_H
@@ -57,7 +57,7 @@ namespace SharedMode::Notify {
 		FragmentGroup *Next{nullptr};
 
 		void *User{nullptr};
-		Data Data{};
+		SharedMode::Data Data{};
 
 		std::optional<bool> WasLost{};
 		std::optional<bool> WasDelivered{};
@@ -88,7 +88,7 @@ namespace SharedMode::Notify {
 		double SendTime{0};
 
 		FragmentHeader Header{};
-		Data Data{};
+		SharedMode::Data Data{};
 
 		Fragment() = default;
 		Fragment(const Fragment &) = delete;

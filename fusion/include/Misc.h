@@ -1,4 +1,4 @@
-// Copyright Exit Games GmbH. All Rights Reserved.
+// Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
 #ifndef SHAREDCLIENT_MISC_C
 #define SHAREDCLIENT_MISC_C
@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <cstdarg>
 #include <memory>

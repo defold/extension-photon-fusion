@@ -37,27 +37,27 @@ public:
     ~FusionDefoldLogOutput() {};
     void LogTrace(const PhotonCommon::CharType* message)
     {
-        dmLogDebug("%s", (char*)message);
+        dmLogDebug("[internal] %s", (char*)message);
     }
 
     void LogDebug(const PhotonCommon::CharType* message)
     {
-        dmLogDebug("%s", (char*)message);
+        dmLogDebug("[internal] %s", (char*)message);
     }
 
     void LogInfo(const PhotonCommon::CharType* message)
     {
-        dmLogInfo("%s", (char*)message);
+        dmLogInfo("[internal] %s", (char*)message);
     }
 
     void LogWarning(const PhotonCommon::CharType* message)
     {
-        dmLogWarning("%s", (char*)message);
+        dmLogWarning("[internal] %s", (char*)message);
     }
 
     void LogError(const PhotonCommon::CharType* message)
     {
-        dmLogError("%s", (char*)message);
+        dmLogError("[internal] %s", (char*)message);
     }
 };
 
@@ -102,6 +102,11 @@ FusionCtx* g_Ctx = 0;
 /******
  * Helpers
  *************************/
+
+static PhotonCommon::StringType ToStringType(const char* text)
+{
+    return PhotonCommon::to_string_type((const PhotonCommon::CharType*)text);
+}
 
 static int32_t CompressFloat(float f)
 {
@@ -268,6 +273,39 @@ static size_t PopUint8(uint8_t* a, uint8_t* out)
     return 1;
 }
 
+static void PrintStack(lua_State *L) {
+    int top = lua_gettop(L);
+    int i;
+
+    dmLogInfo("stack top = %d", top);
+
+    for (i = 1; i <= top; i++) {
+        int t = lua_type(L, i);
+
+        switch (t) {
+            case LUA_TSTRING:
+                dmLogInfo("[%d] %s: '%s'", i, lua_typename(L, t), lua_tostring(L, i));
+                break;
+
+            case LUA_TBOOLEAN:
+                dmLogInfo("[%d] %s: %s", i, lua_typename(L, t), lua_toboolean(L, i) ? "true" : "false");
+                break;
+
+            case LUA_TNUMBER:
+                dmLogInfo("[%d] %s: %g", i, lua_typename(L, t), lua_tonumber(L, i));
+                break;
+
+            case LUA_TNIL:
+                dmLogInfo("[%d] %s: nil", i, lua_typename(L, t));
+                break;
+
+            default:
+                /* userdata, table, function, thread, lightuserdata */
+                dmLogInfo("[%d] %s: %p", i, lua_typename(L, t), lua_topointer(L, i));
+                break;
+        }
+    }
+}
 
 /******
  * Object handlers
@@ -373,11 +411,12 @@ static bool CreateGameObject(dmhash_t id, const SharedMode::ObjectRoot* object)
     dmVMath::Vector3 scale = dmVMath::Vector3(1.0, 1.0, 1.0);
     dmGameObject::HInstance instance;
 
-    dmGameObject::PropertyContainerBuilderParams params;
-    params.m_BoolCount = 1;
-    dmGameObject::HPropertyContainerBuilder builder = dmGameObject::PropertyContainerCreateBuilder(params);
-    dmGameObject::PropertyContainerPushBool(builder, dmHashString64("remote_object"), true);
-    dmGameObject::HPropertyContainer properties = dmGameObject::PropertyContainerCreate(builder);
+    // dmGameObject::PropertyContainerBuilderParams params;
+    // params.m_BoolCount = 1;
+    // dmGameObject::HPropertyContainerBuilder builder = dmGameObject::PropertyContainerCreateBuilder(params);
+    // dmGameObject::PropertyContainerPushBool(builder, dmHashString64("remote_object"), true);
+    // dmGameObject::HPropertyContainer properties = dmGameObject::PropertyContainerCreate(builder);
+    dmGameObject::HPropertyContainer properties = 0x0;
 
     r = dmGameSystem::CompFactorySpawn(
             world, factory, g_Ctx->m_Collection,
@@ -569,11 +608,23 @@ static void Fusion_OnObjectPredictionOverride(SharedMode::ObjectRoot* obj)
     dmLogInfo("Fusion_OnObjectPredictionOverride");
     CallListener(dmHashString64("OnObjectPredictionOverride"));
 }
+static void Fusion_OnLobbyStats(const std::vector<PhotonMatchmaking::LobbyStats>& lobbyStats)
+{
+    dmLogInfo("Fusion_OnLobbyStats");
+    for (int index = 0; index < lobbyStats.size(); index++)
+    {
+        PhotonMatchmaking::LobbyStats lobby = lobbyStats[index];
+        dmLogInfo("Fusion_OnLobbyStats %d %s", index, (char*)lobby.name.c_str());
+    }
+    CallListener(dmHashString64("OnLobbyStats"));
+}
 static void Fusion_OnRoomJoined()
 {
     dmLogInfo("Fusion_OnRoomJoined local player: %d", g_Ctx->m_FusionClient->LocalPlayerId());
+    const char* lobbyname = (const char*)g_Ctx->m_FusionClient->GetRealtimeClient().GetCurrentRoom()->GetLobbyName().c_str();
     const char* name = (const char*)g_Ctx->m_FusionClient->GetRealtimeClient().GetCurrentRoom()->GetName().c_str();
-    dmLogInfo("%s", name);
+    const char* data = (const char*)g_Ctx->m_FusionClient->GetRealtimeClient().GetCurrentRoom()->GetName().data();
+    dmLogInfo("'%s' '%s' '%s'", name, data, lobbyname);
     CallListener(dmHashString64("OnRoomJoined"), name);
 }
 static void Fusion_OnRoomLeft()
@@ -930,8 +981,8 @@ static void DoInit(lua_State* L, const char* appId, const char* appVersion)
     }
 
     PhotonMatchmaking::ClientConstructOptions options = PhotonMatchmaking::ClientConstructOptions();
-    options.appId = (const PhotonCommon::CharType*)appId;
-    options.appVersion = (const PhotonCommon::CharType*)appVersion;
+    options.appId = ToStringType(appId);
+    options.appVersion = ToStringType(appVersion);
     PhotonMatchmaking::RealtimeClient* realtimeClient = new PhotonMatchmaking::RealtimeClient(options);
 
     g_Ctx->m_FusionClient = new SharedMode::Client(*realtimeClient);
@@ -948,6 +999,7 @@ static void DoInit(lua_State* L, const char* appId, const char* appVersion)
     g_Ctx->m_FusionClient->OnObjectOwnerChanged.Subscribe(Fusion_OnObjectOwnerChanged);
     g_Ctx->m_FusionClient->OnObjectPredictionOverride.Subscribe(Fusion_OnObjectPredictionOverride);
     g_Ctx->m_FusionClient->OnDestroyedMapActor.Subscribe(Fusion_OnDestroyedMapActor);
+    g_Ctx->m_FusionClient->GetRealtimeClient().OnLobbyStats.Subscribe(Fusion_OnLobbyStats);
     g_Ctx->m_FusionClient->GetRealtimeClient().OnRoomJoined.Subscribe(Fusion_OnRoomJoined);
     g_Ctx->m_FusionClient->GetRealtimeClient().OnRoomLeft.Subscribe(Fusion_OnRoomLeft);
 
@@ -1037,7 +1089,8 @@ static int Connect(lua_State* L)
 
     // dmLogInfo("Calling Connect with user '%s' and server '%s'", userid, server);
     g_Ctx->m_FusionClient->GetRealtimeClient().Connect(connectOptions);
-    g_Ctx->m_FusionClient->GetRealtimeClient().SelectRegion(PhotonCommon::to_string_type((const PhotonCommon::CharType*)region));
+
+    // g_Ctx->m_FusionClient->GetRealtimeClient().SelectRegion(ToStringType(region));
 
     return 0;
 }
@@ -1198,8 +1251,35 @@ static void LuaTableToStdStringVector(lua_State* L, int index, std::vector<Photo
             lua_pushinteger(L, i + 1);
             lua_gettable(L, index);
             const char* s = luaL_checkstring(L, -1);
-            v[i] = PhotonCommon::StringType((char8_t*)s);
-            lua_pop(L, -1); // pop value
+            v[i] = ToStringType(s);
+            lua_pop(L, 1); // pop value
+        }
+    }
+}
+
+static void LuaTableToPropertyMap(lua_State* L, int index, PhotonMatchmaking::PropertyMap map)
+{
+    if (lua_type(L, index) == LUA_TTABLE)
+    {
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0)
+        {
+            const char* key = luaL_checkstring(L, -2);
+            int type = lua_type(L, -1);
+            if (type == LUA_TNUMBER)
+            {
+                map[ToStringType(key)] = luaL_checknumber(L, -1);
+            }
+            else if (type == LUA_TBOOLEAN)
+            {
+                map[ToStringType(key)] = lua_toboolean(L, -1);
+            }
+            else if (type == LUA_TSTRING)
+            {
+                map[ToStringType(key)] = ToStringType(luaL_checkstring(L, -1));
+            }
+            
+            lua_pop(L, 1); // pop value
         }
     }
 }
@@ -1225,23 +1305,40 @@ static PhotonMatchmaking::CreateRoomOptions CreateRoomOptions(lua_State* L, int 
             {
                 options.maxPlayers = lua_tonumber(L, -1);
             }
+            else if (strcmp("player_ttl_ms", key) == 0)
+            {
+                options.playerTtlMs = lua_tonumber(L, -1);
+            }
+            else if (strcmp("empty_room_ttl_ms", key) == 0)
+            {
+                options.emptyRoomTtlMs = lua_tonumber(L, -1);
+            }
             else if (strcmp("lobby_name", key) == 0)
             {
-                options.lobbyName = (const PhotonCommon::CharType*)lua_tostring(L, -1);
+                const char* lobby_name = lua_tostring(L, -1);
+                options.lobbyName = ToStringType(lobby_name);
             }
             else if (strcmp("expected_users", key) == 0)
             {
-                LuaTableToStdStringVector(L, -1, options.expectedUsers);
+                LuaTableToStdStringVector(L, lua_gettop(L), options.expectedUsers);
+            }
+            else if (strcmp("plugins", key) == 0)
+            {
+                LuaTableToStdStringVector(L, lua_gettop(L), options.plugins);
             }
             else if (strcmp("lobby_properties", key) == 0)
             {
-                LuaTableToStdStringVector(L, -1, options.lobbyProperties);
+                LuaTableToStdStringVector(L, lua_gettop(L), options.lobbyProperties);
+            }
+            else if (strcmp("custom_properties", key) == 0)
+            {
+                LuaTableToPropertyMap(L, lua_gettop(L), options.customProperties);
             }
             else
             {
                 dmLogInfo("Unknown room option %s", key);
             }
-            lua_pop(L, -1); // pop value
+            lua_pop(L, 1); // pop value
         }
     }
     return options;
@@ -1262,17 +1359,17 @@ static PhotonMatchmaking::MatchmakingOptions CreateMatchmakingOptions(lua_State*
             }
             else if (strcmp("lobby_name", key) == 0)
             {
-                options.lobbyName = (const PhotonCommon::CharType*)lua_tostring(L, -1);
+                options.lobbyName = ToStringType(lua_tostring(L, -1));
             }
             else if (strcmp("expected_users", key) == 0)
             {
-                LuaTableToStdStringVector(L, -1, options.expectedUsers);
+                LuaTableToStdStringVector(L, lua_gettop(L), options.expectedUsers);
             }
             else
             {
                 dmLogInfo("Unknown matchmaking option %s", key);
             }
-            lua_pop(L, -1); // pop value
+            lua_pop(L, 1); // pop value
         }
     }
     return options;
@@ -1303,7 +1400,7 @@ static PhotonMatchmaking::JoinRoomOptions CreateJoinRoomOptions(lua_State* L, in
             {
                 dmLogInfo("Unknown matchmaking option %s", key);
             }
-            lua_pop(L, -1); // pop value
+            lua_pop(L, 1); // pop value
         }
     }
     return options;
@@ -1341,6 +1438,7 @@ static int JoinRandomOrCreateRoom(lua_State* L)
     PhotonMatchmaking::MatchmakingOptions matchmakingOptions = CreateMatchmakingOptions(L, 2);
 
     dmLogInfo("JoinRandomOrCreateRoom name = %s", (const char*)roomOptions.lobbyName.c_str());
+    dmLogInfo("JoinRandomOrCreateRoom data = %s", (const char*)roomOptions.lobbyName.data());
     g_Ctx->m_FusionClient->GetRealtimeClient().JoinRandomOrCreateRoom(roomOptions, matchmakingOptions);
 
     return 0;
@@ -1411,7 +1509,7 @@ static int JoinRoom(lua_State* L)
     PhotonMatchmaking::JoinRoomOptions joinOptions = CreateJoinRoomOptions(L, 2);
 
     dmLogInfo("JoinRoom name = %s", roomName);
-    g_Ctx->m_FusionClient->GetRealtimeClient().JoinRoom((const PhotonCommon::CharType*)roomName, joinOptions);
+    g_Ctx->m_FusionClient->GetRealtimeClient().JoinRoom(ToStringType(roomName), joinOptions);
 
     return 0;
 }
@@ -1449,7 +1547,7 @@ static int JoinOrCreateRoom(lua_State* L)
     PhotonMatchmaking::JoinRoomOptions joinOptions = CreateJoinRoomOptions(L, 3);
 
     dmLogInfo("JoinOrCreateRoom name = %s", roomName);
-    g_Ctx->m_FusionClient->GetRealtimeClient().JoinOrCreateRoom((const PhotonCommon::CharType*)roomName, createOptions, joinOptions);
+    g_Ctx->m_FusionClient->GetRealtimeClient().JoinOrCreateRoom(ToStringType(roomName), createOptions, joinOptions);
 
     return 0;
 }
@@ -2183,7 +2281,6 @@ static const luaL_reg Module_methods[] = {
     { "is_connected", IsConnected },
     { "is_running", IsRunning },
     { "is_in_room", IsInRoom },
-    // { "is_joining_or_in_room", IsJoiningOrInRoom },
     { "is_master_client", IsMasterClient },
     { "has_authority", HasAuthority },
 

@@ -1,0 +1,3 @@
+build: 3.0.0.1421
+date: 2026-04-02 14:09:34
+git: 3.0/feature/godot-game-jam (54df8cbf)

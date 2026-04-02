@@ -1,8 +1,9 @@
-// Copyright Exit Games GmbH. All Rights Reserved.
+// Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
 #pragma once
 
 #include <charconv>
+#include <limits>
 #include <string>
 #include <type_traits>
 

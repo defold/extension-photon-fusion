@@ -1,6 +1,4 @@
-//
-// Created by Linus on 2025-11-21.
-//
+// Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
 #ifndef STRINGHEAP_H
 #define STRINGHEAP_H

@@ -1,10 +1,11 @@
-// Copyright Exit Games GmbH. All Rights Reserved.
+// Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
 #ifndef SHAREDCLIENT_BUFFERS_H
 #define SHAREDCLIENT_BUFFERS_H
 
 #include "Misc.h"
 #include "Aliases.h"
+#include <cstring>
 #include <optional>
 
 namespace SharedMode {
@@ -57,7 +58,7 @@ namespace SharedMode {
 
 		uint64_t ULongVar();
 
-		Data DataAll();
+		SharedMode::Data ReadDataAll();
 
 		int64_t LongVar() { return ZigZagDecode(static_cast<int64_t>(ULongVar())); }
 
@@ -67,7 +68,7 @@ namespace SharedMode {
 		int32_t IntVar() { return static_cast<int32_t>(LongVar()); }
 		uint32_t UIntVar() { return static_cast<uint32_t>(ULongVar()); }
 
-		void Data(Data &data);
+		void ReadData(SharedMode::Data &data);
 
 		void Skip(const size_t length) { Use(length); }
 
@@ -79,7 +80,7 @@ namespace SharedMode {
 
 		void Versions(int32_t &plugin_version, int32_t &client_version);
 
-		ObjectId ObjectId() {
+		SharedMode::ObjectId ReadObjectId() {
 			SharedMode::ObjectId id{};
 			id.Origin = Player();
 			id.Counter = UIntVar();
@@ -133,7 +134,7 @@ namespace SharedMode {
 
 		[[nodiscard]] size_t Offset() const { return _offset; }
 
-		void ObjectId(const ObjectId id) {
+		void WriteObjectId(const SharedMode::ObjectId id) {
 			Player(id.Origin);
 			UIntVar(id.Counter);
 		}
@@ -180,9 +181,9 @@ namespace SharedMode {
 
 		void Clear() const;
 
-		void DataAll(const Data &data);
+		void WriteDataAll(const SharedMode::Data &data);
 
-		void Data(const Data &data);
+		void WriteData(const SharedMode::Data &data);
 
 		friend struct ResetPoint;
 	};

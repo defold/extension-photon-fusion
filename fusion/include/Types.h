@@ -1,4 +1,4 @@
-// Copyright Exit Games GmbH. All Rights Reserved.
+// Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
 #ifndef SHAREDCLIENT_TYPES_H
 #define SHAREDCLIENT_TYPES_H
@@ -74,6 +74,8 @@ namespace SharedMode {
         None = 0,
         IsRootTransform = 1 << 1,
         IgnoreRootTransformProperties = 1 << 2,
+        SceneObject = 1 << 3,
+        ExistsOnClient = 1 << 4,
     };
 
     inline ObjectSpecialFlags operator&(ObjectSpecialFlags a, ObjectSpecialFlags b)
@@ -149,7 +151,7 @@ namespace SharedMode {
         BufferT<Tick> Ticks{};
 
     protected:
-        Client *Client;
+        SharedMode::Client *Client;
 
     public:
         static constexpr size_t ExtraTailWords = sizeof(ObjectTail) / 4;
@@ -160,7 +162,7 @@ namespace SharedMode {
 
         ObjectId Id{0, 0};
         void *Engine{nullptr};
-        ObjectType ObjectType{ObjectType::Base};
+        SharedMode::ObjectType ObjectType{SharedMode::ObjectType::Base};
         bool HasValidData{false};
         Data Header{};
         TypeRef Type{};
@@ -263,6 +265,8 @@ namespace SharedMode {
         explicit ObjectRoot(SharedMode::Client *client) : Object(client) {
             ObjectType = ObjectType::Root;
         }
+
+        int LocalSendRate{1};
 
         double Time{0};
         PlayerId Owner{0};

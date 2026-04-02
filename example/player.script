@@ -39,7 +39,7 @@ end
 
 local function turn(self, value)
 	self.rotation = value
-	if not self.remote_player then
+	if fusion.has_authority() then
 		--realtime.raise_event(false, value, EVENT_TURN)
 	end
 end
@@ -51,14 +51,14 @@ local function move(self, value)
 		play_animation(self, ANIM_WALK)
 	end
 	self.forward = value
-	if not self.remote_player then
+	if fusion.has_authority() then
 		--realtime.raise_event(false, value, EVENT_FORWARD)
 	end
 end
 
 local function attack(self)
 	play_animation(self, ANIM_ATTACK, go.PLAYBACK_ONCE_FORWARD)
-	if not self.remote_player then
+	if fusion.has_authority() then
 		--realtime.raise_event(false, 0, EVENT_ATTACK)
 	end
 end
@@ -67,7 +67,7 @@ local function jump(self, speed)
 	self.velocity.y = speed
 	self.ground_contact = false
 	play_animation(self, ANIM_JUMP_START, go.PLAYBACK_ONCE_FORWARD)
-	if not self.remote_player then
+	if fusion.has_authority() then
 		--realtime.raise_event(false, speed, EVENT_JUMP)
 	end
 end
@@ -75,8 +75,6 @@ end
 
 
 function init(self)
-	self.remote_player = go.get("#fusion", "remote_object")
-
 	-- rotation around the y-axis
 	-- positive value = rotate clockwise, negative value = rotate counter clockwise, 
 	self.rotation = 0
@@ -111,14 +109,14 @@ function init(self)
 	model.set_mesh_enabled("#model", "Rectangle_Shield", false)
 	model.set_mesh_enabled("#model", "Badge_Shield", false)
 
-	if not self.remote_player then
+	if fusion.has_authority() then
 		msg.post(".", "acquire_input_focus")
 		go.set_parent("/camera", go.get_id())
 	end
 end
 
 function final(self)
-	if not self.remote_player then
+	if fusion.has_authority() then
 		go.set_parent("/camera", nil, true)
 	else
 		-- cleanup
@@ -126,7 +124,7 @@ function final(self)
 end
 
 function update(self, dt)
-	if self.remote_player then
+	if not fusion.has_authority() then
 		--print("I AM REMOTE", go.get_id(), go.get_position(), go.get_rotation(), go.get_scale())
 		return
 	else

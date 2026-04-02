@@ -1,7 +1,8 @@
+// Copyright 2026 Exit Games GmbH. All Rights Reserved.
+
 #pragma once
 
 #include "DirectMode.h"
-#include "LobbyType.h"
 #include "PlayerView.h"
 #include "PropertyValue.h"
 #include "WebFlags.h"
@@ -38,8 +39,6 @@ namespace PhotonMatchmaking {
         const std::vector<PhotonCommon::StringType>& GetLobbyProperties() const noexcept;
         bool GetSuppressRoomEvents() const noexcept;
         const std::vector<PhotonCommon::StringType>& GetPlugins() const noexcept;
-        const PhotonCommon::StringType& GetLobbyName() const noexcept;
-        LobbyType GetLobbyType() const noexcept;
 
         // Mutations
         bool SetOpen(bool isOpen, const WebFlags& webFlags = {});
@@ -75,8 +74,6 @@ namespace PhotonMatchmaking {
         std::vector<PhotonCommon::StringType> lobbyProperties;
         bool suppressRoomEvents = false;
         std::vector<PhotonCommon::StringType> plugins;
-        PhotonCommon::StringType lobbyName;
-        LobbyType lobbyType = LobbyType::Default;
 
         ExitGames::LoadBalancing::MutableRoom* room = nullptr;
     };
