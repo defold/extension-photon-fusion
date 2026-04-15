@@ -1,17 +1,8 @@
 go.property("factory", msg.url())
 go.property("is_scene_object", false)
 
-go.property("settings_none", true)
-go.property("settings_owner_leaves_owner_to_none", false)
-go.property("settings_global_instance", false)
-
-go.property("interestmode_all", true)
-go.property("interestmode_area", false)
-go.property("interestmode_assigned", false)
-
-
 function init(self)
-	print("init", go.get_id(), os.date(), fusion.has_authority())
+	print("init", go.get_id(), "date", os.date(), "has_authority", fusion.has_authority(), "has_owner", fusion.has_owner())
 	assert(go.exists(self.factory))
 	if fusion.has_authority() then
 		msg.post("#", "register_object")
@@ -21,7 +12,7 @@ end
 function final(self)
 	print("final", go.get_id())
 	if fusion.has_authority() then
-		fusion.destroy(go.get_id())
+		fusion.unregister_object(go.get_id())
 	end
 end
 
@@ -29,13 +20,7 @@ function on_message(self, message_id, message, sender)
 	if message_id == hash("register_object") then
 		print("on_message register_object", go.get_id())
 		local scene = 0
-
-		local owner_mode
-		if fusion.is_master_client() then
-			owner_mode = fusion.OWNERMODE_MASTERCLIENT
-		else
-			owner_mode = fusion.OWNERMODE_TRANSACTION
-		end
+		local owner_mode = fusion.OWNERMODE_PLAYERATTACHED
 			
 		if self.is_scene_object then
 			print("calling fusion.register_scene_object()", go.get_id())
@@ -44,6 +29,5 @@ function on_message(self, message_id, message, sender)
 			print("calling fusion.register_object()", go.get_id())
 			fusion.register_object(go.get_id(), scene, self.factory, owner_mode)
 		end
-		
 	end
 end

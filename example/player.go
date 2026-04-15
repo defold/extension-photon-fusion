@@ -1,13 +1,4 @@
 components {
-  id: "fusion"
-  component: "/fusion/fusion.script"
-  properties {
-    id: "factory"
-    value: "example:/game#playerfactory"
-    type: PROPERTY_TYPE_URL
-  }
-}
-components {
   id: "player"
   component: "/example/player.script"
 }
@@ -47,6 +38,7 @@ embedded_components {
   "group: \"player\"\n"
   "mask: \"floor\"\n"
   "mask: \"wall\"\n"
+  "mask: \"crate\"\n"
   "embedded_collision_shape {\n"
   "  shapes {\n"
   "    shape_type: TYPE_SPHERE\n"

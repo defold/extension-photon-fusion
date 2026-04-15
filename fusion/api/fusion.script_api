@@ -112,6 +112,26 @@
     - name: join_room_options
       type: table
 
+  - name: create_room
+    type: function
+    desc: |
+      Create room.
+    parameters:
+    - name: room_name
+      type: string
+    - name: create_room_options
+      type: table
+
+  - name: leave_room
+    type: function
+    desc: |
+      Leave room.
+    parameters:
+    - name: will_come_back
+      type: boolean
+    - name: send_auth_cookie
+      type: boolean
+
   - name: is_connected
     type: function
     desc: |
@@ -154,20 +174,42 @@
     - name: scene
       type: number
 
+  - name: spawn
+    type: function
+    desc: |
+      Create a networked game object.
+    parameters:
+    - name: factory_url
+      type: string
+    - name: scene
+      type: number
+    - name: owner_mode
+      type: number
+    returns:
+    - name: Game
+      type: hash
+      desc: |
+        Object id
+        
+
   - name: register
     type: function
     desc: |
       Register an object.
     parameters:
+    - name: factory_url
+      type: string
     - name: id
       type: string
     - name: scene
       type: number
+    - name: owner_mode
+      type: number
 
-  - name: destroy
+  - name: unregister
     type: function
     desc: |
-      Destroy a local object.
+      Unregister a previously registered object.
     parameters:
     - name: id
       type: string
@@ -184,7 +226,7 @@
     - name: data
       type: string
 
-  - name: send_rpc
+  - name: rpc
     type: function
     desc: |
       Send RPC.
@@ -219,7 +261,7 @@
         Player id of the local client
         
 
-  - name: get_owner
+  - name: get_owner_id
     type: function
     desc: |
       Get the player id of the current owner of an object
@@ -253,6 +295,20 @@
         If the local client is the owner of the object
         
 
+  - name: has_authority
+    type: function
+    desc: |
+      Check if this client has authority over a game object. Use this to decide if user input should be handled or not.
+    parameters:
+    - name: id
+      type: string
+    returns:
+    - name: authority
+      type: boolean
+      desc: |
+        Returns true if the client has authority
+        
+
   - name: has_owner
     type: function
     desc: |
@@ -270,26 +326,17 @@
         If the object has an owner
         
 
-  - name: set_want_owner
+  - name: want_authority
     type: function
     desc: |
       Signal desire for the local client to own an object
     parameters:
+    - name: claim_ownership
+      type: boolean
     - name: id
       type: string
       desc: |
         Id of the object to own
-        
-
-  - name: set_dont_want_owner
-    type: function
-    desc: |
-      Signal desire for the local client to no longer own an object
-    parameters:
-    - name: id
-      type: string
-      desc: |
-        Id of the object to disown
         
 
   - name: clear_owner_cooldown
@@ -301,6 +348,45 @@
       type: string
       desc: |
         Id of the object to clear cooldown for
+        
+
+  - name: set_send_rate
+    type: function
+    desc: |
+      Set the send rate of an objeht. This decided how much bandwidth to allocate
+    parameters:
+    - name: id
+      type: string
+    - name: send_rate
+      type: number
+    - name: id
+      type: string
+      desc: |
+        Id of the object to send rate for
+        
+
+  - name: set_local_send_rate
+    type: function
+    desc: |
+      Set the local send rate divisor for an object. A value of `1` means the object sends every tick (highest rate). A value of `16` means it sends every 16th tick (lowest rate). This is a client-side optimization -- the object still exists on all clients but consumes less bandwidth when you are not the active authority.
+    parameters:
+    - name: send_rate
+      type: number
+    - name: id
+      type: string
+      desc: |
+        Id of the object to send rate for
+        
+
+  - name: reset_send_rate
+    type: function
+    desc: |
+      Reset the send rate of an object.
+    parameters:
+    - name: id
+      type: string
+      desc: |
+        Id of the object to reset send rate for
         
 
   - name: player_count
@@ -325,17 +411,6 @@
         True if this client is the room's master
         
 
-  - name: has_authority
-    type: function
-    desc: |
-      Check if the current script belongs to a game object over which the client has authority. Use this to decide if user input should be handled or not.
-    returns:
-    - name: authority
-      type: boolean
-      desc: |
-        Returns true if the calling script has authority
-        
-
   - name: get_rtt
     type: function
     desc: |
@@ -358,32 +433,51 @@
         Time diff
         
 
-  - name: area_of_interest_used
+  - name: set_global_interest_key
     type: function
     desc: |
-      Check if the room has AOI enabled..
-    returns:
-    - name: aoi_used
-      type: boolean
+      Set global visibility key for an object
+
+  - name: set_area_interest_key
+    type: function
+    desc: |
+      Set area visibility key for an object
+
+  - name: set_user_interest_key
+    type: function
+    desc: |
+      Set user visibility key for an object
+
+  - name: set_area_keys
+    type: function
+    desc: |
+      Set area visibility keys
+    parameters:
+    - name: keys
+      type: table
       desc: |
-        True if the room/session has AOI enabled
+        Area keys to set. Stored as a table of key value pairs (area_key->send_rate)
         
 
-  - name: area_of_interest_cell_size
+  - name: add_user_key
     type: function
     desc: |
-      Get the AOI cell size. Configured on a room level.
-    returns:
-    - name: size
-      type: number
-      desc: |
-        The cell size, uniform across all three axis.
-        
+      Add a user visibility key
+
+  - name: remove_user_key
+    type: function
+    desc: |
+      Remove a user visibility key from an object
 
   - name: OWNERMODE_TRANSACTION
     type: number
     desc: |
       OWNERMODE_TRANSACTION
+
+  - name: OWNERMODE_PLAYERATTACHED
+    type: number
+    desc: |
+      OWNERMODE_PLAYERATTACHED
 
   - name: OWNERMODE_DYNAMIC
     type: number
@@ -394,6 +488,11 @@
     type: number
     desc: |
       OWNERMODE_MASTERCLIENT
+
+  - name: OWNERMODE_GAMEGLOBAL
+    type: number
+    desc: |
+      OWNERMODE_GAMEGLOBAL
 
   - name: STATE_DISCONNECTED
     type: number
@@ -514,4 +613,94 @@
     type: number
     desc: |
       DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT
+
+  - name: EVENT_OBJECT_CREATED
+    type: number
+    desc: |
+      EVENT_OBJECT_CREATED
+
+  - name: EVENT_SUB_OBJECT_CREATED
+    type: number
+    desc: |
+      EVENT_SUB_OBJECT_CREATED
+
+  - name: EVENT_OBJECT_DESTROYED
+    type: number
+    desc: |
+      EVENT_OBJECT_DESTROYED
+
+  - name: EVENT_SUB_OBJECT_DESTROYED
+    type: number
+    desc: |
+      EVENT_SUB_OBJECT_DESTROYED
+
+  - name: EVENT_OBJECT_OWNER_CHANGED
+    type: number
+    desc: |
+      EVENT_OBJECT_OWNER_CHANGED
+
+  - name: EVENT_OBJECT_PREDICTION_OVERRIDE
+    type: number
+    desc: |
+      EVENT_OBJECT_PREDICTION_OVERRIDE
+
+  - name: EVENT_LOBBY_STATS
+    type: number
+    desc: |
+      EVENT_LOBBY_STATS
+
+  - name: EVENT_ROOM_JOINED
+    type: number
+    desc: |
+      EVENT_ROOM_JOINED
+
+  - name: EVENT_ROOM_LEFT
+    type: number
+    desc: |
+      EVENT_ROOM_LEFT
+
+  - name: EVENT_RPC
+    type: number
+    desc: |
+      EVENT_RPC
+
+  - name: EVENT_SCENE_CHANGE
+    type: number
+    desc: |
+      EVENT_SCENE_CHANGE
+
+  - name: EVENT_DESTROYED_MAP_ACTOR
+    type: number
+    desc: |
+      EVENT_DESTROYED_MAP_ACTOR
+
+  - name: EVENT_INTEREST_ENTER
+    type: number
+    desc: |
+      EVENT_INTEREST_ENTER
+
+  - name: EVENT_INTEREST_EXIT
+    type: number
+    desc: |
+      EVENT_INTEREST_EXIT
+
+  - name: EVENT_FORCED_DISCONNECT
+    type: number
+    desc: |
+      EVENT_FORCED_DISCONNECT
+
+  - name: EVENT_FUSION_START
+    type: number
+    desc: |
+      EVENT_FUSION_START
+
+  - name: EVENT_CONNECTED
+    type: number
+    desc: |
+      EVENT_CONNECTED
+
+  - name: EVENT_DISCONNECTED
+    type: number
+    desc: |
+      EVENT_DISCONNECTED
 

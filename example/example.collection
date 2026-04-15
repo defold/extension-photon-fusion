@@ -19,6 +19,12 @@ embedded_instances {
   "  data: \"prototype: \\\"/example/player.go\\\"\\n"
   "\"\n"
   "}\n"
+  "embedded_components {\n"
+  "  id: \"cratefactory\"\n"
+  "  type: \"factory\"\n"
+  "  data: \"prototype: \\\"/example/crate.go\\\"\\n"
+  "\"\n"
+  "}\n"
   ""
 }
 embedded_instances {

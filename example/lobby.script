@@ -37,12 +37,13 @@ local function connect(region, userid, server)
 	userid = userid or ("user" .. math.random(999999))
 	server = server or ""
 	log("connect region: '%s' userid: '%s' server: '%s'", region, userid, server)
-	fusion.connect(region, userid, server)
+	fusion.on_event(function(self, event_id, event)
+		print("on event", self, event_id, event)
+	end)
+
+	fusion.connect(region, userid)
 	wait_until(function()
 		return fusion.is_connected()
-	end)
-	fusion.on_event(function(self, event_id, event)
-		print("on event", event_id, event)
 	end)
 end
 
@@ -70,11 +71,26 @@ local function join_room(name)
 	end)
 end
 
-local function start_game()
+local function start_game(self)
 	log("start game")
 	fusion.start()
+
 	local pos = vmath.vector3(math.random(5), 0, math.random(5))
-	factory.create("#playerfactory", pos)
+	local rot = nil
+	local scene = 1
+	local owner_mode = fusion.OWNERMODE_PLAYERATTACHED
+	pprint(self)
+	local id = fusion.spawn("#playerfactory", pos, rot, scene, owner_mode)
+	print("Spawned player", id)
+	pprint(self)
+	--factory.create("#playerfactory", pos)
+
+	for i=1,5 do
+		print("foo")
+		local pos = vmath.vector3(math.random(5), math.random(5), math.random(5))
+		print("bar")
+		fusion.spawn("#cratefactory", pos, rot, scene, fusion.OWNERMODE_DYNAMIC)
+	end
 end
 
 function init(self)
@@ -85,7 +101,6 @@ function init(self)
 	local index = sys.get_config_int("project.instance_index", 1)
 	log(index)
 	math.randomseed(os.time() + index)
-	pprint(fusion)
 	coroutine.wrap(function()
 		fusion.init_from_settings()
 		fusion.enable_debug(true)
@@ -94,7 +109,7 @@ function init(self)
 			wait(1)
 		end
 		join_room()
-		start_game()
+		start_game(self)
 		print("GAME STARTED")
 	end)()
 end
