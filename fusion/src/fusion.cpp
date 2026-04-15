@@ -2010,17 +2010,13 @@ static int SpawnObject(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 1);
 
-    dmLogInfo("SpawnObject");
     dmGameObject::HInstance caller_instance = dmScript::CheckGOInstance(L);
     dmGameObject::HCollection collection = dmGameObject::GetCollection(caller_instance);
 
-    dmLogInfo("SpawnObject 2");
     dmGameSystem::HFactoryWorld factory_world;
     dmGameSystem::HFactoryComponent factory_component;
     dmMessage::URL factory_url;
     dmScript::GetComponentFromLua(L, 1, "factoryc", (dmGameObject::HComponentWorld*)&factory_world, (dmGameObject::HComponent*)&factory_component, &factory_url);
-
-    dmLogInfo("SpawnObject 3");
 
     dmVMath::Point3 position;
     if (!lua_isnoneornil(L, 2))
@@ -3144,7 +3140,6 @@ dmExtension::Result UpdateFusion(dmExtension::Params* params)
             Fusion_TickAfterFrameBegin(dt);
         }
 
-        dmLogInfo("Update %d", state);
         g_Ctx->m_ConnectionState = state;
     }
 
