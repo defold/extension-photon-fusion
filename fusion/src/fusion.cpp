@@ -2107,6 +2107,30 @@ static int SpawnObject(lua_State* L)
     return 1;
 }
 
+/** Destroy a networked object.
+ * @name despawn
+ * @string [id]
+ */
+static int DespawnObject(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    dmhash_t id = ResolveId(L, 1);
+    const SharedMode::ObjectRoot* object = GetSharedObject(id);
+    if (object)
+    {
+        DeleteFusionObject(object);
+    }
+
+    return 0;
+}
+
 
 /** Register an object
  * @name register_object
@@ -2767,6 +2791,7 @@ static const luaL_reg Module_methods[] = {
 
     // lifecycle
     { "spawn", SpawnObject },
+    { "despawn", DespawnObject },
     { "register_object", RegisterObject },
     { "register_scene_object", RegisterSceneObject },
     { "unregister_object", UnregisterObject },

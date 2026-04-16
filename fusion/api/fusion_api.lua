@@ -111,6 +111,8 @@ function fusion.register_scene_object(scene,factory_url,owner_mode,id) end
 ---@param owner_mode number
 ---@return hash Id
 function fusion.spawn(factory_url,position,rotation,scene,owner_mode) end
+---@param id string?
+function fusion.despawn(id) end
 ---@param scene number
 ---@param factory_url string
 ---@param owner_mode number

@@ -12,10 +12,10 @@ Register a game object using `fusion.register_object()` to handle property sync 
 
 ```lua
 local factory_url = "example:/game#playerfactory"
-local id = go.get_id()
 local scene = 1
 local owner_mode = fusion.OWNERMODE_PLAYERATTACHED
-fusion.register_object(factory_url, id, scene, owner_mode)
+local id = go.get_id()
+fusion.register_object(factory_url, scene, owner_mode, id)
 ```
 
 Call `fusion.unregister_object(id)` to no longer handle property sync for a game object.
@@ -27,11 +27,11 @@ Authority mode is decided when the object is registered with Fusion:
 
 ```lua
 local function on_player_joined()
-	fusion.register_object(id, scene, factory_url, fusion.OWNERMODE_TRANSACTION)
-	fusion.register_object(id, scene, factory_url, fusion.OWNERMODE_PLAYERATTACHED)
-	fusion.register_object(id, scene, factory_url, fusion.OWNERMODE_DYNAMIC)
-	fusion.register_object(id, scene, factory_url, fusion.OWNERMODE_MASTERCLIENT)
-	fusion.register_object(id, scene, factory_url, fusion.OWNERMODE_GAMEGLOBAL)
+	fusion.register_object(scene, factory_url, fusion.OWNERMODE_TRANSACTION, id)
+	fusion.register_object(scene, factory_url, fusion.OWNERMODE_PLAYERATTACHED, id)
+	fusion.register_object(scene, factory_url, fusion.OWNERMODE_DYNAMIC, id)
+	fusion.register_object(scene, factory_url, fusion.OWNERMODE_MASTERCLIENT, id)
+	fusion.register_object(scene, factory_url, fusion.OWNERMODE_GAMEGLOBAL, id)
 end
 ```
 

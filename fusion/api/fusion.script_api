@@ -223,6 +223,15 @@
         Of the spawned game object
         
 
+  - name: despawn
+    type: function
+    desc: |
+      Destroy a networked object.
+    parameters:
+    - name: id
+      type: string
+      optional: True
+
   - name: register_object
     type: function
     desc: |
