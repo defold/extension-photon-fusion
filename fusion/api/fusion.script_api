@@ -75,8 +75,6 @@
     desc: |
       Join or create random room.
     parameters:
-    - name: room_name
-      type: string
     - name: create_room_options
       type: table
     - name: matchmaking_options
@@ -135,7 +133,7 @@
   - name: is_connected
     type: function
     desc: |
-      Check if Fusion connected.
+      Check if Fusion is connected.
     returns:
     - name: connected
       type: boolean
@@ -143,9 +141,18 @@
   - name: is_running
     type: function
     desc: |
-      Check if Fusion is running.
+      Check if Fusion has config and is connected.
     returns:
     - name: running
+      type: boolean
+
+  - name: is_started
+    type: function
+    desc: |
+      Check if Fusion is started. Fusion is considered started after a call to.
+      `fusion.start()` has received a `EventOnFusionStart` event.
+    returns:
+    - name: started
       type: boolean
 
   - name: is_in_room
@@ -164,55 +171,81 @@
     - name: enable
       type: boolean
 
-  - name: register
+  - name: register_scene_object
     type: function
     desc: |
       Register a scene object.
     parameters:
-    - name: id
-      type: string
     - name: scene
       type: number
+    - name: factory_url
+      type: string
+    - name: owner_mode
+      type: number
+    - name: id
+      type: string
+      optional: True
 
   - name: spawn
     type: function
     desc: |
-      Create a networked game object.
+      Create a networked game object. This will spawn a game object in the same.
+      Way as when calling factory.create(). The function will also register the spawned object with Fusion as if manually calling register_object()
     parameters:
     - name: factory_url
       type: string
+    - name: position
+      type: vector3
+      desc: |
+        Initial position of created game object
+        
+      optional: True
+    - name: rotation
+      type: quat
+      desc: |
+        Initial rotation of created game object
+        
+      optional: True
     - name: scene
       type: number
+      desc: |
+        The scene to which this object belongs
+        
     - name: owner_mode
       type: number
+      desc: |
+        Owner mode of spawned object
+        
     returns:
-    - name: Game
+    - name: Id
       type: hash
       desc: |
-        Object id
+        Of the spawned game object
         
 
-  - name: register
+  - name: register_object
     type: function
     desc: |
       Register an object.
     parameters:
-    - name: factory_url
-      type: string
-    - name: id
-      type: string
     - name: scene
       type: number
+    - name: factory_url
+      type: string
     - name: owner_mode
       type: number
+    - name: id
+      type: string
+      optional: True
 
-  - name: unregister
+  - name: unregister_object
     type: function
     desc: |
       Unregister a previously registered object.
     parameters:
     - name: id
       type: string
+      optional: True
 
   - name: scene_change
     type: function
@@ -271,28 +304,12 @@
       desc: |
         Id of the object to get the owner for
         
+      optional: True
     returns:
     - name: The
       type: number
       desc: |
         Player id of the object's owner
-        
-
-  - name: is_owner
-    type: function
-    desc: |
-      Check if the local client is the owner of an object
-    parameters:
-    - name: id
-      type: string
-      desc: |
-        Id of the object
-        
-    returns:
-    - name: True
-      type: boolean
-      desc: |
-        If the local client is the owner of the object
         
 
   - name: has_authority
@@ -302,6 +319,7 @@
     parameters:
     - name: id
       type: string
+      optional: True
     returns:
     - name: authority
       type: boolean
@@ -319,6 +337,7 @@
       desc: |
         Id of the object
         
+      optional: True
     returns:
     - name: True
       type: boolean
@@ -338,6 +357,7 @@
       desc: |
         Id of the object to own
         
+      optional: True
 
   - name: clear_owner_cooldown
     type: function
@@ -349,14 +369,13 @@
       desc: |
         Id of the object to clear cooldown for
         
+      optional: True
 
   - name: set_send_rate
     type: function
     desc: |
-      Set the send rate of an objeht. This decided how much bandwidth to allocate
+      Set the send rate of an object. This decided how much bandwidth to allocate
     parameters:
-    - name: id
-      type: string
     - name: send_rate
       type: number
     - name: id
@@ -364,6 +383,7 @@
       desc: |
         Id of the object to send rate for
         
+      optional: True
 
   - name: set_local_send_rate
     type: function
@@ -377,6 +397,7 @@
       desc: |
         Id of the object to send rate for
         
+      optional: True
 
   - name: reset_send_rate
     type: function
@@ -388,6 +409,7 @@
       desc: |
         Id of the object to reset send rate for
         
+      optional: True
 
   - name: player_count
     type: function
@@ -614,10 +636,10 @@
     desc: |
       DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT
 
-  - name: EVENT_OBJECT_CREATED
+  - name: EVENT_OBJECT_READY
     type: number
     desc: |
-      EVENT_OBJECT_CREATED
+      EVENT_OBJECT_READY
 
   - name: EVENT_SUB_OBJECT_CREATED
     type: number

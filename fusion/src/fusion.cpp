@@ -69,7 +69,6 @@ struct FusionObject
     dmVMath::Point3          m_Position;
     dmVMath::Quat            m_Rotation;
     dmVMath::Vector3         m_Scale;
-    bool                     m_HasAuthority;
 };
 
 enum FusionConnectionState
@@ -91,6 +90,7 @@ struct FusionCtx
     FusionDefoldLogOutput*                         m_FusionDefoldLogOutput;
     dmScript::LuaCallbackInfo*                     m_EventCallback;
     PhotonMatchmaking::ConnectionState             m_ConnectionState;
+    bool                                           m_IsStarted;
 
     // Component type identifiers
     uint32_t                                       m_Scriptc;
@@ -101,7 +101,7 @@ struct FusionCtx
     uint32_t                                       m_Labelc;
 
     // Event constants
-    dmhash_t                                       m_EventOnObjectCreated;
+    dmhash_t                                       m_EventOnObjectReady;
     dmhash_t                                       m_EventOnSubObjectCreated;
     dmhash_t                                       m_EventOnObjectDestroyed;
     dmhash_t                                       m_EventOnSubObjectDestroyed;
@@ -124,7 +124,7 @@ struct FusionCtx
     {
         memset((void*)this, 0, sizeof(*this));
         m_ConnectionState = PhotonMatchmaking::ConnectionState::Disconnected;
-        m_EventOnObjectCreated = dmHashString64("OnObjectCreated");
+        m_EventOnObjectReady = dmHashString64("OnObjectReady");
         m_EventOnSubObjectCreated = dmHashString64("OnSubObjectCreated");
         m_EventOnObjectDestroyed = dmHashString64("OnObjectDestroyed");
         m_EventOnSubObjectDestroyed = dmHashString64("OnSubObjectDestroyed");
@@ -407,7 +407,7 @@ static dmhash_t ResolveId(lua_State* L, int index)
     }
     else
     {
-        return dmScript::CheckHashOrString(L, 1);
+        return dmScript::CheckHashOrString(L, index);
     }
 }
 
@@ -426,18 +426,10 @@ static SharedMode::ObjectRoot* GetSharedObject(dmhash_t id)
     return 0;
 }
 
-static bool HasFusionObject(const SharedMode::ObjectRoot* object)
+static bool HasSharedObject(dmhash_t id)
 {
-    dmHashTable<dmhash_t, FusionObject*>::Iterator iter = g_Ctx->m_FusionObjects.GetIterator();
-    while(iter.Next())
-    {
-        FusionObject* fusion_object = iter.GetValue();
-        if (object == fusion_object->m_SharedObject)
-        {
-            return true;
-        }
-    }
-    return false;
+    FusionObject** object = g_Ctx->m_FusionObjects.Get(id);
+    return object != 0;
 }
 
 static FusionObject* FindFusionObject(const SharedMode::ObjectRoot* object)
@@ -510,7 +502,7 @@ static bool CreateGameObject(dmhash_t id, const SharedMode::ObjectRoot* object)
 
     //
     // spawn gameobject
-    dmVMath::Point3 position = dmVMath::Point3(3.0, 0, 0);
+    dmVMath::Point3 position = dmVMath::Point3(0, 0, 0);
     dmVMath::Quat rotation = dmVMath::Quat::identity();
     dmVMath::Vector3 scale = dmVMath::Vector3(1.0, 1.0, 1.0);
     
@@ -561,7 +553,6 @@ static FusionObject* CreateFusionObject(dmhash_t id, SharedMode::ObjectRoot* obj
     fusion_object->m_Rotation.setY(0.0);
     fusion_object->m_Rotation.setZ(0.0);
     fusion_object->m_Rotation.setW(0.0);
-    fusion_object->m_HasAuthority = (instance != 0);
     // important to add object here before the game object is created
     // we need to be able to query for instance has_authority() from a script
     g_Ctx->m_FusionObjects.Put(id, fusion_object);
@@ -856,7 +847,6 @@ static void DeserializeFusionObject(FusionObject* fusion_object)
             dmVMath::Vector3 angular_velocity;
             word_offset += PopVector3(words + word_offset, &linear_velocity);
             word_offset += PopVector3(words + word_offset, &angular_velocity);
-
             dmGameObject::SetPropertyFromVector3(instance, component_id, dmHashString64("linear_velocity"), linear_velocity);
             dmGameObject::SetPropertyFromVector3(instance, component_id, dmHashString64("angular_velocity"), angular_velocity);
         }
@@ -865,6 +855,11 @@ static void DeserializeFusionObject(FusionObject* fusion_object)
 
 static dmGameObject::Result DoRegisterObject(dmhash_t id, dmMessage::URL* factory_url, uint32_t scene, SharedMode::ObjectOwnerModes owner_mode)
 {
+    if (HasSharedObject(id))
+    {
+        return dmGameObject::RESULT_INVALID_OPERATION;
+    }
+
     uint8_t header[1000];
     size_t headerLength;
     size_t wordsCount;
@@ -970,7 +965,15 @@ static void Fusion_OnObjectReady(SharedMode::ObjectRoot* object)
     FusionObject* fusion_object = CreateFusionObject(id, object);
     if (fusion_object)
     {
-        CallListener(g_Ctx->m_EventOnObjectCreated, fusion_object->m_Id);
+        lua_State* L = SetupListener();
+        if(L)
+        {
+            dmScript::PushHash(L, g_Ctx->m_EventOnObjectReady);
+            lua_newtable(L);
+            dmScript::PushHash(L, fusion_object->m_Id);
+            lua_setfield(L, -2, "id");
+            CallListener(L, 3, 0);
+        }
     }
     else
     {
@@ -1182,6 +1185,7 @@ void Fusion_OnForcedDisconnect(std::string message)
 void Fusion_OnFusionStart()
 {
     dmLogInfo("Fusion_OnFusionStart");
+    g_Ctx->m_IsStarted = true;
     CallListener(g_Ctx->m_EventOnFusionStart);
 }
 
@@ -1622,7 +1626,6 @@ static PhotonMatchmaking::JoinRoomOptions ParseJoinRoomOptions(lua_State* L, int
 
 /** Join or create random room
  * @name join_or_create_room_random
- * @string room_name
  * @table create_room_options
  * @table matchmaking_options
  */
@@ -1839,7 +1842,7 @@ static int LeaveRoom(lua_State* L)
 }
 
 
-/** Check if Fusion connected
+/** Check if Fusion is connected
  * @name is_connected
  * @treturn boolean connected
  */
@@ -1858,7 +1861,7 @@ static int IsConnected(lua_State* L)
 }
 
 
-/** Check if Fusion is running
+/** Check if Fusion has config and is connected
  * @name is_running
  * @treturn boolean running
  */
@@ -1873,6 +1876,24 @@ static int IsRunning(lua_State* L)
     DM_LUA_STACK_CHECK(L, 1);
     bool running = g_Ctx->m_FusionClient->IsRunning();
     lua_pushboolean(L, running);
+    return 1;
+}
+
+/** Check if Fusion is started. Fusion is considered started after a call to
+ * `fusion.start()` has received a `EventOnFusionStart` event.
+ * @name is_started
+ * @treturn boolean started
+ */
+static int IsStarted(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 1);
+    lua_pushboolean(L, g_Ctx->m_IsStarted);
     return 1;
 }
 
@@ -1929,9 +1950,11 @@ static int EnableDebug(lua_State* L)
 
 
 /** Register a scene object
- * @name register
- * @string id
+ * @name register_scene_object
  * @number scene
+ * @string factory_url
+ * @number owner_mode
+ * @string [id]
  */
 static int RegisterSceneObject(lua_State* L)
 {
@@ -1942,10 +1965,10 @@ static int RegisterSceneObject(lua_State* L)
     }
     DM_LUA_STACK_CHECK(L, 0);
 
-    dmhash_t id = dmScript::CheckHashOrString(L, 1);
-    uint32_t scene = (uint32_t)luaL_checknumber(L, 2);
-    dmMessage::URL* factory_url = dmScript::CheckURL(L, 3);
-    SharedMode::ObjectOwnerModes ownerMode = (SharedMode::ObjectOwnerModes)luaL_checknumber(L, 4);
+    uint32_t scene = (uint32_t)luaL_checknumber(L, 1);
+    dmMessage::URL* factory_url = dmScript::CheckURL(L, 2);
+    SharedMode::ObjectOwnerModes ownerMode = (SharedMode::ObjectOwnerModes)luaL_checknumber(L, 3);
+    dmhash_t id = ResolveId(L, 4);
 
     uint8_t header[1000];
     size_t headerLength;
@@ -1991,14 +2014,16 @@ static int RegisterSceneObject(lua_State* L)
     return 0;
 }
 
-/** Create a networked game object
+/** Create a networked game object. This will spawn a game object in the same
+ * way as when calling factory.create(). The function will also register the
+ * spawned object with Fusion as if manually calling register_object()
  * @name spawn
  * @string factory_url
- * @vector3 position
- * @quat rotation
- * @number scene
- * @number owner_mode
- * @treturn hash Game object id
+ * @vector3 [position] Initial position of created game object
+ * @quat [rotation] Initial rotation of created game object
+ * @number scene The scene to which this object belongs
+ * @number owner_mode Owner mode of spawned object
+ * @treturn hash Id of the spawned game object
  */
 static int SpawnObject(lua_State* L)
 {
@@ -2077,16 +2102,18 @@ static int SpawnObject(lua_State* L)
 
     dmScript::PushHash(L, id);
 
+    Fusion_OnObjectReady(GetSharedObject(id));
+
     return 1;
 }
 
 
 /** Register an object
- * @name register
- * @string factory_url
- * @string id
+ * @name register_object
  * @number scene
+ * @string factory_url
  * @number owner_mode
+ * @string [id]
  */
 static int RegisterObject(lua_State* L)
 {
@@ -2098,11 +2125,12 @@ static int RegisterObject(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 0);
 
-    dmMessage::URL* factory_url = dmScript::CheckURL(L, 1);
-    dmhash_t id = dmScript::CheckHashOrString(L, 2);
-    uint32_t scene = (uint32_t)luaL_checknumber(L, 3);
-    SharedMode::ObjectOwnerModes ownerMode = (SharedMode::ObjectOwnerModes)luaL_checknumber(L, 4);
+    uint32_t scene = (uint32_t)luaL_checknumber(L, 1);
+    dmMessage::URL* factory_url = dmScript::CheckURL(L, 2);
+    SharedMode::ObjectOwnerModes ownerMode = (SharedMode::ObjectOwnerModes)luaL_checknumber(L, 3);
+    dmhash_t id = ResolveId(L, 4);
 
+    dmLogInfo("RegisterObject %d", ownerMode);
     dmGameObject::Result r = DoRegisterObject(id, factory_url, scene, ownerMode);
     if (dmGameObject::RESULT_OK != r)
     {
@@ -2114,8 +2142,8 @@ static int RegisterObject(lua_State* L)
 }
 
 /** Unregister a previously registered object
- * @name unregister
- * @string id
+ * @name unregister_object
+ * @string [id]
  */
 static int UnregisterObject(lua_State* L)
 {
@@ -2127,7 +2155,7 @@ static int UnregisterObject(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 0);
 
-    dmhash_t id = dmScript::CheckHashOrString(L, 1);
+    dmhash_t id = ResolveId(L, 1);
     dmLogInfo("DestroyObject id: %s", dmHashReverseSafe64(id));
     SharedMode::ObjectRoot* object = GetSharedObject(id);
     if (object)
@@ -2240,7 +2268,7 @@ static int GetLocalPlayerId(lua_State* L)
 /**
  * Get the player id of the current owner of an object
  * @name get_owner_id
- * @string id Id of the object to get the owner for
+ * @string [id] Id of the object to get the owner for
  * @treturn number The player id of the object's owner
  */
 static int GetOwnerId(lua_State* L)
@@ -2269,12 +2297,13 @@ static int GetOwnerId(lua_State* L)
 
 
 /**
- * Check if the local client is the owner of an object
- * @name is_owner
- * @string id Id of the object
- * @treturn boolean True if the local client is the owner of the object
+ * Check if this client has authority over a game object. Use this to decide if
+ * user input should be handled or not.
+ * @name has_authority
+ * @string [id]
+ * @treturn boolean authority Returns true if the client has authority
  */
-static int IsOwner(lua_State* L)
+static int HasAuthority(lua_State* L)
 {
     if (!g_Ctx->m_FusionClient)
     {
@@ -2293,32 +2322,8 @@ static int IsOwner(lua_State* L)
     }
     else
     {
-        lua_pushboolean(L, 0);
+        lua_pushboolean(L, false);
     }
-    return 1;
-}
-
-/**
- * Check if this client has authority over a game object. Use this to decide if
- * user input should be handled or not.
- * @name has_authority
- * @string id
- * @treturn boolean authority Returns true if the client has authority
- */
-static int HasAuthority(lua_State* L)
-{
-    if (!g_Ctx->m_FusionClient)
-    {
-        luaL_error(L, "No Fusion client");
-        return 0;
-    }
-
-    DM_LUA_STACK_CHECK(L, 1);
-
-    dmhash_t id = ResolveId(L, 1);
-    FusionObject** object = g_Ctx->m_FusionObjects.Get(id);
-    lua_pushboolean(L, object ? (*object)->m_HasAuthority : true);
-
     return 1;
 }
 
@@ -2326,7 +2331,7 @@ static int HasAuthority(lua_State* L)
 /**
  * Check if an object has an owner
  * @name has_owner
- * @string id Id of the object
+ * @string [id] Id of the object
  * @treturn boolean True if the object has an owner
  */
 static int HasOwner(lua_State* L)
@@ -2357,7 +2362,7 @@ static int HasOwner(lua_State* L)
  * Signal desire for the local client to own an object
  * @name want_authority
  * @boolean claim_ownership
- * @string id Id of the object to own
+ * @string [id] Id of the object to own
  */
 static int WantAuthority(lua_State* L)
 {
@@ -2376,12 +2381,18 @@ static int WantAuthority(lua_State* L)
     {
         if (claim)
         {
+            dmLogInfo("SetWantOwner");
             g_Ctx->m_FusionClient->SetWantOwner(object);
         }
         else
         {
+            dmLogInfo("SetDontWantOwner");
             g_Ctx->m_FusionClient->SetDontWantOwner(object);
         }
+    }
+    else
+    {
+        luaL_error(L, "Unable to find object");
     }
     return 0;
 }
@@ -2389,7 +2400,7 @@ static int WantAuthority(lua_State* L)
 /**
  * Explicitly clear the ownership cooldown
  * @name clear_owner_cooldown
- * @string id Id of the object to clear cooldown for
+ * @string [id] Id of the object to clear cooldown for
  */
 static int ClearOwnerCooldown(lua_State* L)
 {
@@ -2411,11 +2422,10 @@ static int ClearOwnerCooldown(lua_State* L)
 }
 
 /**
- * Set the send rate of an objeht. This decided how much bandwidth to allocate
+ * Set the send rate of an object. This decided how much bandwidth to allocate
  * @name set_send_rate
- * @string id
  * @number send_rate 
- * @string id Id of the object to send rate for
+ * @string [id] Id of the object to send rate for
  */
 static int SetSendRate(lua_State* L)
 {
@@ -2445,7 +2455,7 @@ static int SetSendRate(lua_State* L)
  * active authority.
  * @name set_local_send_rate
  * @number send_rate 
- * @string id Id of the object to send rate for
+ * @string [id] Id of the object to send rate for
  */
 static int SetLocalSendRate(lua_State* L)
 {
@@ -2470,7 +2480,7 @@ static int SetLocalSendRate(lua_State* L)
 /**
  * Reset the send rate of an object.
  * @name reset_send_rate
- * @string id Id of the object to reset send rate for
+ * @string [id] Id of the object to reset send rate for
  */
 static int ResetSendRate(lua_State* L)
 {
@@ -2768,13 +2778,13 @@ static const luaL_reg Module_methods[] = {
 
     // connection state
     { "is_connected", IsConnected },
+    { "is_started", IsStarted },
     { "is_running", IsRunning },
     { "is_in_room", IsInRoom },
     { "is_master_client", IsMasterClient },
 
     // ownership
     { "get_owner_id", GetOwnerId },
-    { "is_owner", IsOwner },
     { "has_owner", HasOwner },
     { "has_authority", HasAuthority },
     { "want_authority", WantAuthority },
@@ -2793,7 +2803,7 @@ static void LuaInit(lua_State* L)
     luaL_register(L, MODULE_NAME, Module_methods);
 
 
-    #define SETCONSTANT(name, val) \
+    #define SETCONSTANT_NUMBER(name, val) \
     lua_pushnumber(L, (lua_Number) val); \
     lua_setfield(L, -2, #name);
 
@@ -2801,245 +2811,249 @@ static void LuaInit(lua_State* L)
      * OWNERMODE_TRANSACTION
      * @field OWNERMODE_TRANSACTION
      */
-    SETCONSTANT(OWNERMODE_TRANSACTION, SharedMode::ObjectOwnerModes::Transaction)
+    SETCONSTANT_NUMBER(OWNERMODE_TRANSACTION, SharedMode::ObjectOwnerModes::Transaction)
     /**
      * OWNERMODE_PLAYERATTACHED
      * @field OWNERMODE_PLAYERATTACHED
      */
-    SETCONSTANT(OWNERMODE_PLAYERATTACHED, SharedMode::ObjectOwnerModes::PlayerAttached)
+    SETCONSTANT_NUMBER(OWNERMODE_PLAYERATTACHED, SharedMode::ObjectOwnerModes::PlayerAttached)
     /**
      * OWNERMODE_DYNAMIC
      * @field OWNERMODE_DYNAMIC
      */
-    SETCONSTANT(OWNERMODE_DYNAMIC, SharedMode::ObjectOwnerModes::Dynamic)
+    SETCONSTANT_NUMBER(OWNERMODE_DYNAMIC, SharedMode::ObjectOwnerModes::Dynamic)
     /**
      * OWNERMODE_MASTERCLIENT
      * @field OWNERMODE_MASTERCLIENT
      */
-    SETCONSTANT(OWNERMODE_MASTERCLIENT, SharedMode::ObjectOwnerModes::MasterClient)
+    SETCONSTANT_NUMBER(OWNERMODE_MASTERCLIENT, SharedMode::ObjectOwnerModes::MasterClient)
     /**
      * OWNERMODE_GAMEGLOBAL
      * @field OWNERMODE_GAMEGLOBAL
      */
-    SETCONSTANT(OWNERMODE_GAMEGLOBAL, SharedMode::ObjectOwnerModes::GameGlobal)
+    SETCONSTANT_NUMBER(OWNERMODE_GAMEGLOBAL, SharedMode::ObjectOwnerModes::GameGlobal)
 
     /**
      * STATE_DISCONNECTED
      * @field STATE_DISCONNECTED
      */
-    SETCONSTANT(STATE_DISCONNECTED, PhotonMatchmaking::ConnectionState::Disconnected)
+    SETCONSTANT_NUMBER(STATE_DISCONNECTED, PhotonMatchmaking::ConnectionState::Disconnected)
     /**
      * STATE_CONNECTING
      * @field STATE_CONNECTING
      */
-    SETCONSTANT(STATE_CONNECTING, PhotonMatchmaking::ConnectionState::Connecting)
+    SETCONSTANT_NUMBER(STATE_CONNECTING, PhotonMatchmaking::ConnectionState::Connecting)
     /**
      * STATE_CONNECTED
      * @field STATE_CONNECTED
      */
-    SETCONSTANT(STATE_CONNECTED, PhotonMatchmaking::ConnectionState::Connected)
+    SETCONSTANT_NUMBER(STATE_CONNECTED, PhotonMatchmaking::ConnectionState::Connected)
     /**
      * STATE_JOININGROOM
      * @field STATE_JOININGROOM
      */
-    SETCONSTANT(STATE_JOININGROOM, PhotonMatchmaking::ConnectionState::JoiningRoom)
+    SETCONSTANT_NUMBER(STATE_JOININGROOM, PhotonMatchmaking::ConnectionState::JoiningRoom)
     /**
      * STATE_INROOM
      * @field STATE_INROOM
      */
-    SETCONSTANT(STATE_INROOM, PhotonMatchmaking::ConnectionState::InRoom)
+    SETCONSTANT_NUMBER(STATE_INROOM, PhotonMatchmaking::ConnectionState::InRoom)
     /**
      * STATE_LEAVINGROOM
      * @field STATE_LEAVINGROOM
      */
-    SETCONSTANT(STATE_LEAVINGROOM, PhotonMatchmaking::ConnectionState::LeavingRoom)
+    SETCONSTANT_NUMBER(STATE_LEAVINGROOM, PhotonMatchmaking::ConnectionState::LeavingRoom)
     /**
      * STATE_DISCONNECTING
      * @field STATE_DISCONNECTING
      */
-    SETCONSTANT(STATE_DISCONNECTING, PhotonMatchmaking::ConnectionState::Disconnecting)
+    SETCONSTANT_NUMBER(STATE_DISCONNECTING, PhotonMatchmaking::ConnectionState::Disconnecting)
 
 
     /**
      * DISCONNECT_CAUSE_NONE
      * @field DISCONNECT_CAUSE_NONE
      */
-    SETCONSTANT(DISCONNECT_CAUSE_NONE, PhotonMatchmaking::DisconnectCause::None)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_NONE, PhotonMatchmaking::DisconnectCause::None)
     /**
      * DISCONNECT_CAUSE_DISCONNECTBYSERVERUSERLIMIT
      * @field DISCONNECT_CAUSE_DISCONNECTBYSERVERUSERLIMIT
      */
-    SETCONSTANT(DISCONNECT_CAUSE_DISCONNECTBYSERVERUSERLIMIT, PhotonMatchmaking::DisconnectCause::DisconnectByServerUserLimit)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_DISCONNECTBYSERVERUSERLIMIT, PhotonMatchmaking::DisconnectCause::DisconnectByServerUserLimit)
     /**
      * DISCONNECT_CAUSE_EXCEPTIONONCONNECT
      * @field DISCONNECT_CAUSE_EXCEPTIONONCONNECT
      */
-    SETCONSTANT(DISCONNECT_CAUSE_EXCEPTIONONCONNECT, PhotonMatchmaking::DisconnectCause::ExceptionOnConnect)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_EXCEPTIONONCONNECT, PhotonMatchmaking::DisconnectCause::ExceptionOnConnect)
     /**
      * DISCONNECT_CAUSE_DISCONNECTBYSERVER
      * @field DISCONNECT_CAUSE_DISCONNECTBYSERVER
      */
-    SETCONSTANT(DISCONNECT_CAUSE_DISCONNECTBYSERVER, PhotonMatchmaking::DisconnectCause::DisconnectByServer)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_DISCONNECTBYSERVER, PhotonMatchmaking::DisconnectCause::DisconnectByServer)
     /**
      * DISCONNECT_CAUSE_DISCONNECTBYSERVERLOGIC
      * @field DISCONNECT_CAUSE_DISCONNECTBYSERVERLOGIC
      */
-    SETCONSTANT(DISCONNECT_CAUSE_DISCONNECTBYSERVERLOGIC, PhotonMatchmaking::DisconnectCause::DisconnectByServerLogic)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_DISCONNECTBYSERVERLOGIC, PhotonMatchmaking::DisconnectCause::DisconnectByServerLogic)
     /**
      * DISCONNECT_CAUSE_TIMEOUTDISCONNECT
      * @field DISCONNECT_CAUSE_TIMEOUTDISCONNECT
      */
-    SETCONSTANT(DISCONNECT_CAUSE_TIMEOUTDISCONNECT, PhotonMatchmaking::DisconnectCause::TimeoutDisconnect)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_TIMEOUTDISCONNECT, PhotonMatchmaking::DisconnectCause::TimeoutDisconnect)
     /**
      * DISCONNECT_CAUSE_EXCEPTION
      * @field DISCONNECT_CAUSE_EXCEPTION
      */
-    SETCONSTANT(DISCONNECT_CAUSE_EXCEPTION, PhotonMatchmaking::DisconnectCause::Exception)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_EXCEPTION, PhotonMatchmaking::DisconnectCause::Exception)
     /**
      * DISCONNECT_CAUSE_INVALIDAUTHENTICATION
      * @field DISCONNECT_CAUSE_INVALIDAUTHENTICATION
      */
-    SETCONSTANT(DISCONNECT_CAUSE_INVALIDAUTHENTICATION, PhotonMatchmaking::DisconnectCause::InvalidAuthentication)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_INVALIDAUTHENTICATION, PhotonMatchmaking::DisconnectCause::InvalidAuthentication)
     /**
      * DISCONNECT_CAUSE_MAXCCUREACHED
      * @field DISCONNECT_CAUSE_MAXCCUREACHED
      */
-    SETCONSTANT(DISCONNECT_CAUSE_MAXCCUREACHED, PhotonMatchmaking::DisconnectCause::MaxCCUReached)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_MAXCCUREACHED, PhotonMatchmaking::DisconnectCause::MaxCCUReached)
     /**
      * DISCONNECT_CAUSE_INVALIDREGION
      * @field DISCONNECT_CAUSE_INVALIDREGION
      */
-    SETCONSTANT(DISCONNECT_CAUSE_INVALIDREGION, PhotonMatchmaking::DisconnectCause::InvalidRegion)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_INVALIDREGION, PhotonMatchmaking::DisconnectCause::InvalidRegion)
     /**
      * DISCONNECT_CAUSE_OPERATIONNOTALLOWEDINCURRENTSTATE
      * @field DISCONNECT_CAUSE_OPERATIONNOTALLOWEDINCURRENTSTATE
      */
-    SETCONSTANT(DISCONNECT_CAUSE_OPERATIONNOTALLOWEDINCURRENTSTATE, PhotonMatchmaking::DisconnectCause::OperationNotAllowedInCurrentState)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_OPERATIONNOTALLOWEDINCURRENTSTATE, PhotonMatchmaking::DisconnectCause::OperationNotAllowedInCurrentState)
     /**
      * DISCONNECT_CAUSE_CUSTOMAUTHENTICATIONFAILED
      * @field DISCONNECT_CAUSE_CUSTOMAUTHENTICATIONFAILED
      */
-    SETCONSTANT(DISCONNECT_CAUSE_CUSTOMAUTHENTICATIONFAILED, PhotonMatchmaking::DisconnectCause::CustomAuthenticationFailed)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_CUSTOMAUTHENTICATIONFAILED, PhotonMatchmaking::DisconnectCause::CustomAuthenticationFailed)
     /**
      * DISCONNECT_CAUSE_CLIENTVERSIONTOOOLD
      * @field DISCONNECT_CAUSE_CLIENTVERSIONTOOOLD
      */
-    SETCONSTANT(DISCONNECT_CAUSE_CLIENTVERSIONTOOOLD, PhotonMatchmaking::DisconnectCause::ClientVersionTooOld)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_CLIENTVERSIONTOOOLD, PhotonMatchmaking::DisconnectCause::ClientVersionTooOld)
     /**
      * DISCONNECT_CAUSE_CLIENTVERSIONINVALID
      * @field DISCONNECT_CAUSE_CLIENTVERSIONINVALID
      */
-    SETCONSTANT(DISCONNECT_CAUSE_CLIENTVERSIONINVALID, PhotonMatchmaking::DisconnectCause::ClientVersionInvalid)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_CLIENTVERSIONINVALID, PhotonMatchmaking::DisconnectCause::ClientVersionInvalid)
     /**
      * DISCONNECT_CAUSE_DASHBOARDVERSIONINVALID
      * @field DISCONNECT_CAUSE_DASHBOARDVERSIONINVALID
      */
-    SETCONSTANT(DISCONNECT_CAUSE_DASHBOARDVERSIONINVALID, PhotonMatchmaking::DisconnectCause::DashboardVersionInvalid)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_DASHBOARDVERSIONINVALID, PhotonMatchmaking::DisconnectCause::DashboardVersionInvalid)
     /**
      * DISCONNECT_CAUSE_AUTHENTICATIONTICKETEXPIRED
      * @field DISCONNECT_CAUSE_AUTHENTICATIONTICKETEXPIRED
      */
-    SETCONSTANT(DISCONNECT_CAUSE_AUTHENTICATIONTICKETEXPIRED, PhotonMatchmaking::DisconnectCause::AuthenticationTicketExpired)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_AUTHENTICATIONTICKETEXPIRED, PhotonMatchmaking::DisconnectCause::AuthenticationTicketExpired)
     /**
      * DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT
      * @field DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT
      */
-    SETCONSTANT(DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT, PhotonMatchmaking::DisconnectCause::DisconnectByOperationLimit)
+    SETCONSTANT_NUMBER(DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT, PhotonMatchmaking::DisconnectCause::DisconnectByOperationLimit)
+    #undef SETCONSTANT_NUMBER
 
+
+    #define SETCONSTANT_HASH(name, val) \
+    dmScript::PushHash(L, val); \
+    lua_setfield(L, -2, #name);
 
     /**
-     * EVENT_OBJECT_CREATED
-     * @field EVENT_OBJECT_CREATED
+     * EVENT_OBJECT_READY
+     * @field EVENT_OBJECT_READY
      */
-    SETCONSTANT(EVENT_OBJECT_CREATED, g_Ctx->m_EventOnObjectCreated)
+    SETCONSTANT_HASH(EVENT_OBJECT_READY, g_Ctx->m_EventOnObjectReady)
     /**
      * EVENT_SUB_OBJECT_CREATED
      * @field EVENT_SUB_OBJECT_CREATED
      */
-    SETCONSTANT(EVENT_SUB_OBJECT_CREATED, g_Ctx->m_EventOnSubObjectCreated)
+    SETCONSTANT_HASH(EVENT_SUB_OBJECT_CREATED, g_Ctx->m_EventOnSubObjectCreated)
     /**
      * EVENT_OBJECT_DESTROYED
      * @field EVENT_OBJECT_DESTROYED
      */
-    SETCONSTANT(EVENT_OBJECT_DESTROYED, g_Ctx->m_EventOnObjectDestroyed)
+    SETCONSTANT_HASH(EVENT_OBJECT_DESTROYED, g_Ctx->m_EventOnObjectDestroyed)
     /**
      * EVENT_SUB_OBJECT_DESTROYED
      * @field EVENT_SUB_OBJECT_DESTROYED
      */
-    SETCONSTANT(EVENT_SUB_OBJECT_DESTROYED, g_Ctx->m_EventOnSubObjectDestroyed)
+    SETCONSTANT_HASH(EVENT_SUB_OBJECT_DESTROYED, g_Ctx->m_EventOnSubObjectDestroyed)
     /**
      * EVENT_OBJECT_OWNER_CHANGED
      * @field EVENT_OBJECT_OWNER_CHANGED
      */
-    SETCONSTANT(EVENT_OBJECT_OWNER_CHANGED, g_Ctx->m_EventOnObjectOwnerChanged)
+    SETCONSTANT_HASH(EVENT_OBJECT_OWNER_CHANGED, g_Ctx->m_EventOnObjectOwnerChanged)
     /**
      * EVENT_OBJECT_PREDICTION_OVERRIDE
      * @field EVENT_OBJECT_PREDICTION_OVERRIDE
      */
-    SETCONSTANT(EVENT_OBJECT_PREDICTION_OVERRIDE, g_Ctx->m_EventOnObjectPredictionOverride)
+    SETCONSTANT_HASH(EVENT_OBJECT_PREDICTION_OVERRIDE, g_Ctx->m_EventOnObjectPredictionOverride)
     /**
      * EVENT_LOBBY_STATS
      * @field EVENT_LOBBY_STATS
      */
-    SETCONSTANT(EVENT_LOBBY_STATS, g_Ctx->m_EventOnLobbyStats)
+    SETCONSTANT_HASH(EVENT_LOBBY_STATS, g_Ctx->m_EventOnLobbyStats)
     /**
      * EVENT_ROOM_JOINED
      * @field EVENT_ROOM_JOINED
      */
-    SETCONSTANT(EVENT_ROOM_JOINED, g_Ctx->m_EventOnRoomJoined)
+    SETCONSTANT_HASH(EVENT_ROOM_JOINED, g_Ctx->m_EventOnRoomJoined)
     /**
      * EVENT_ROOM_LEFT
      * @field EVENT_ROOM_LEFT
      */
-    SETCONSTANT(EVENT_ROOM_LEFT, g_Ctx->m_EventOnRoomLeft)
+    SETCONSTANT_HASH(EVENT_ROOM_LEFT, g_Ctx->m_EventOnRoomLeft)
     /**
      * EVENT_RPC
      * @field EVENT_RPC
      */
-    SETCONSTANT(EVENT_RPC, g_Ctx->m_EventOnRpc)
+    SETCONSTANT_HASH(EVENT_RPC, g_Ctx->m_EventOnRpc)
     /**
      * EVENT_SCENE_CHANGE
      * @field EVENT_SCENE_CHANGE
      */
-    SETCONSTANT(EVENT_SCENE_CHANGE, g_Ctx->m_EventOnSceneChange)
+    SETCONSTANT_HASH(EVENT_SCENE_CHANGE, g_Ctx->m_EventOnSceneChange)
     /**
      * EVENT_DESTROYED_MAP_ACTOR
      * @field EVENT_DESTROYED_MAP_ACTOR
      */
-    SETCONSTANT(EVENT_DESTROYED_MAP_ACTOR, g_Ctx->m_EventOnDestroyedMapActor)
+    SETCONSTANT_HASH(EVENT_DESTROYED_MAP_ACTOR, g_Ctx->m_EventOnDestroyedMapActor)
     /**
      * EVENT_INTEREST_ENTER
      * @field EVENT_INTEREST_ENTER
      */
-    SETCONSTANT(EVENT_INTEREST_ENTER, g_Ctx->m_EventOnInterestEnter)
+    SETCONSTANT_HASH(EVENT_INTEREST_ENTER, g_Ctx->m_EventOnInterestEnter)
     /**
      * EVENT_INTEREST_EXIT
      * @field EVENT_INTEREST_EXIT
      */
-    SETCONSTANT(EVENT_INTEREST_EXIT, g_Ctx->m_EventOnInterestExit)
+    SETCONSTANT_HASH(EVENT_INTEREST_EXIT, g_Ctx->m_EventOnInterestExit)
     /**
      * EVENT_FORCED_DISCONNECT
      * @field EVENT_FORCED_DISCONNECT
      */
-    SETCONSTANT(EVENT_FORCED_DISCONNECT, g_Ctx->m_EventOnForcedDisconnect)
+    SETCONSTANT_HASH(EVENT_FORCED_DISCONNECT, g_Ctx->m_EventOnForcedDisconnect)
     /**
      * EVENT_FUSION_START
      * @field EVENT_FUSION_START
      */
-    SETCONSTANT(EVENT_FUSION_START, g_Ctx->m_EventOnFusionStart)
+    SETCONSTANT_HASH(EVENT_FUSION_START, g_Ctx->m_EventOnFusionStart)
     /**
      * EVENT_CONNECTED
      * @field EVENT_CONNECTED
      */
-    SETCONSTANT(EVENT_CONNECTED, g_Ctx->m_EventOnConnected)
+    SETCONSTANT_HASH(EVENT_CONNECTED, g_Ctx->m_EventOnConnected)
     /**
      * EVENT_DISCONNECTED
      * @field EVENT_DISCONNECTED
      */
-    SETCONSTANT(EVENT_DISCONNECTED, g_Ctx->m_EventOnDisconnected)
+    SETCONSTANT_HASH(EVENT_DISCONNECTED, g_Ctx->m_EventOnDisconnected)
+    #undef SETCONSTANT_HASH
 
-
-    #undef SETCONSTANT
 
     lua_pop(L, 1);
     assert(top == lua_gettop(L));
@@ -3106,16 +3120,6 @@ dmExtension::Result UpdateFusion(dmExtension::Params* params)
     {
         g_Ctx->m_FusionClient->GetRealtimeClient().Service(true);
 
-        if (g_Ctx->m_FusionClient->GetRealtimeClient().IsInRoom())
-        {
-            Fusion_TickBeforeFrameEnd();
-            g_Ctx->m_FusionClient->UpdateFrameEnd();
-            g_Ctx->m_FusionClient->UpdateFrameBegin(dt);
-            Fusion_TickAfterFrameBegin(dt);
-        }
-
-
-
         const PhotonMatchmaking::ConnectionState state = g_Ctx->m_FusionClient->GetRealtimeClient().GetState();
         if (state == PhotonMatchmaking::ConnectionState::Connected)
         {
@@ -3132,12 +3136,15 @@ dmExtension::Result UpdateFusion(dmExtension::Params* params)
             }
         }
 
-        if (g_Ctx->m_FusionClient->GetRealtimeClient().IsInRoom())
+        if (g_Ctx->m_FusionClient->IsRunning())
         {
-            Fusion_TickBeforeFrameEnd();
-            g_Ctx->m_FusionClient->UpdateFrameEnd();
-            g_Ctx->m_FusionClient->UpdateFrameBegin(dt);
-            Fusion_TickAfterFrameBegin(dt);
+            if (g_Ctx->m_FusionClient->GetRealtimeClient().IsInRoom())
+            {
+                Fusion_TickBeforeFrameEnd();
+                g_Ctx->m_FusionClient->UpdateFrameEnd();
+                g_Ctx->m_FusionClient->UpdateFrameBegin(dt);
+                Fusion_TickAfterFrameBegin(dt);
+            }
         }
 
         g_Ctx->m_ConnectionState = state;

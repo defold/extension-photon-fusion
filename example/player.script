@@ -108,11 +108,6 @@ function init(self)
 	model.set_mesh_enabled("#model", "Round_Shield", false)
 	model.set_mesh_enabled("#model", "Rectangle_Shield", false)
 	model.set_mesh_enabled("#model", "Badge_Shield", false)
-
-	if fusion.has_authority() then
-		msg.post(".", "acquire_input_focus")
-		go.set_parent("/camera", go.get_id())
-	end
 end
 
 function final(self)
@@ -125,11 +120,7 @@ end
 
 function update(self, dt)
 	if not fusion.has_authority() then
-		--print("I AM REMOTE", go.get_id(), go.get_position(), go.get_rotation(), go.get_scale())
 		return
-	else
-		--print("I AM LOCAL", go.get_id(), go.get_position(), go.get_rotation(), go.get_scale())
-		--return
 	end
 
 	-- rotate model object around the y-axis
@@ -177,6 +168,11 @@ function on_message(self, message_id, message, sender)
 				self.velocity.y = 0
 				self.ground_contact = true
 			end
+		end
+	elseif message_id == fusion.EVENT_OBJECT_READY then
+		if fusion.has_authority() then
+			msg.post(".", "acquire_input_focus")
+			go.set_parent("/camera", go.get_id())
 		end
 	end
 end

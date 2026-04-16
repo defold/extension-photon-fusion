@@ -2,32 +2,21 @@ go.property("factory", msg.url())
 go.property("is_scene_object", false)
 
 function init(self)
-	print("init", go.get_id(), "date", os.date(), "has_authority", fusion.has_authority(), "has_owner", fusion.has_owner())
+	--print("init", go.get_id(), "date", os.date(), "has_authority", fusion.has_authority(), "has_owner", fusion.has_owner())
 	assert(go.exists(self.factory))
-	if fusion.has_authority() then
-		msg.post("#", "register_object")
+	local scene = 0
+	if self.is_scene_object then
+		print("calling fusion.register_scene_object()", go.get_id())
+		fusion.register_scene_object(scene, self.factory, fusion.OWNERMODE_MASTERCLIENT)
+	else
+		print("calling fusion.register_object()", go.get_id())
+		fusion.register_object(scene, self.factory, fusion.OWNERMODE_PLAYERATTACHED)
 	end
 end
 
 function final(self)
 	print("final", go.get_id())
 	if fusion.has_authority() then
-		fusion.unregister_object(go.get_id())
-	end
-end
-
-function on_message(self, message_id, message, sender)
-	if message_id == hash("register_object") then
-		print("on_message register_object", go.get_id())
-		local scene = 0
-		local owner_mode = fusion.OWNERMODE_PLAYERATTACHED
-			
-		if self.is_scene_object then
-			print("calling fusion.register_scene_object()", go.get_id())
-			fusion.register_scene_object(go.get_id(), scene, self.factory, options)
-		else
-			print("calling fusion.register_object()", go.get_id())
-			fusion.register_object(go.get_id(), scene, self.factory, owner_mode)
-		end
+		fusion.unregister_object()
 	end
 end

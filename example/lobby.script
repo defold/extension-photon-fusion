@@ -32,13 +32,16 @@ local function wait(seconds)
 	coroutine.yield()
 end
 
-local function connect(region, userid, server)
-	region = region or "eu"
-	userid = userid or ("user" .. math.random(999999))
-	server = server or ""
-	log("connect region: '%s' userid: '%s' server: '%s'", region, userid, server)
+local function connect()
+	local region = "eu"
+	local userid = ("user" .. math.random(999999))
+	log("connect region: '%s' userid: '%s'", region, userid)
 	fusion.on_event(function(self, event_id, event)
-		print("on event", self, event_id, event)
+		if event_id == fusion.EVENT_OBJECT_OWNER_CHANGED then
+			msg.post(event.id, fusion.EVENT_OBJECT_OWNER_CHANGED, event)
+		elseif event_id == fusion.EVENT_OBJECT_READY then
+			msg.post(event.id, fusion.EVENT_OBJECT_READY, event)
+		end
 	end)
 
 	fusion.connect(region, userid)
@@ -71,24 +74,24 @@ local function join_room(name)
 	end)
 end
 
-local function start_game(self)
+local function start_game()
 	log("start game")
 	fusion.start()
+	wait_until(function()
+		return fusion.is_started()
+	end)
+end
 
+local function spawn_objects()
+	log("spawn objects")
 	local pos = vmath.vector3(math.random(5), 0, math.random(5))
 	local rot = nil
 	local scene = 1
 	local owner_mode = fusion.OWNERMODE_PLAYERATTACHED
-	pprint(self)
-	local id = fusion.spawn("#playerfactory", pos, rot, scene, owner_mode)
-	print("Spawned player", id)
-	pprint(self)
-	--factory.create("#playerfactory", pos)
+	fusion.spawn("#playerfactory", pos, rot, scene, owner_mode)
 
 	for i=1,5 do
-		print("foo")
 		local pos = vmath.vector3(math.random(5), math.random(5), math.random(5))
-		print("bar")
 		fusion.spawn("#cratefactory", pos, rot, scene, fusion.OWNERMODE_DYNAMIC)
 	end
 end
@@ -109,7 +112,8 @@ function init(self)
 			wait(1)
 		end
 		join_room()
-		start_game(self)
+		start_game()
+		spawn_objects()
 		print("GAME STARTED")
 	end)()
 end
