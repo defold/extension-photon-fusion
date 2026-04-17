@@ -1943,18 +1943,18 @@ static int UnregisterObject(lua_State* L)
     if (object)
     {
         g_Ctx->m_FusionObjects.Erase(id);
-        bool ok = g_Ctx->m_FusionClient->DestroyObjectLocal(object, true);
+        g_Ctx->m_FusionClient->DestroyObjectLocal(object, true);
     }
     return 0;
 }
 
 /** Change scene
- * @name scene_change
+ * @name change_scene
  * @number index
  * @number sequence
  * @string data
  */
-static int SceneChange(lua_State* L)
+static int ChangeScene(lua_State* L)
 {
     if (!g_Ctx->m_FusionClient)
     {
@@ -1967,8 +1967,7 @@ static int SceneChange(lua_State* L)
     uint32_t index = (uint32_t)luaL_checknumber(L, 1);
     uint32_t sequence = (uint32_t)luaL_checknumber(L, 2);
     const char* data = luaL_checkstring(L, 3);
-
-    // bool ok = g_Ctx->m_FusionClient->SceneChange(object, true);
+    g_Ctx->m_FusionClient->ChangeScene(index, sequence, (const PhotonCommon::CharType*)data);
 
     return 0;
 }
@@ -2553,7 +2552,7 @@ static const luaL_reg Module_methods[] = {
     { "register_object", RegisterObject },
     { "register_scene_object", RegisterSceneObject },
     { "unregister_object", UnregisterObject },
-    { "scene_change", SceneChange },
+    { "change_scene", ChangeScene },
 
     // rpc and events
     { "rpc", SendRpc },
