@@ -1,9 +1,6 @@
 syntax = "proto2";
 package FusionMessages;
 
-import "ddf/ddf_extensions.proto";
-import "script/ddf_script.proto";
-
 message OnObjectReady
 {
     required uint64 id = 1;
