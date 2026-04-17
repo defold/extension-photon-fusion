@@ -17,7 +17,7 @@ platforms:
     win32:
         context:
             defines:  ["_EG_WINDOWS_PLATFORM"]
-            flags:    ["-std=c++17"]
+            flags:    ["-std=c++20"]
     android:
         context:
             defines:  ["_EG_ANDROID_PLATFORM"]
