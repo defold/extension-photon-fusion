@@ -38,3 +38,13 @@ fusion.on_event(function(self, event_id, data)
 end)
 ```
 
+## Messages
+Fusion will send a message to the created game object when it is ready:
+
+```lua
+function on_message(self, message_id, message, sender)
+	if message_id == fusion.EVENT_OBJECT_READY then
+		print("I am ready and will sync my state")
+	end
+end
+```
