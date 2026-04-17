@@ -6,3 +6,5 @@ Thumbs.db
 instance_*_log.txt
 manifest.private.der
 manifest.public.der
+debug.keystore
+debug.keystore.pass.txt
