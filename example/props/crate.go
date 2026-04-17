@@ -1,44 +1,56 @@
+components {
+  id: "fusion"
+  component: "/fusion/fusion.script"
+  properties {
+    id: "is_scene_object"
+    value: "true"
+    type: PROPERTY_TYPE_BOOLEAN
+  }
+}
 embedded_components {
   id: "model"
   type: "model"
-  data: "mesh: \"/example/assets/models/platformerkit/crate.glb\"\n"
-  "skeleton: \"/example/assets/models/platformerkit/crate.glb\"\n"
+  data: "mesh: \"/example/assets/models/dungeon/box_large.gltf\"\n"
+  "skeleton: \"/example/assets/models/dungeon/box_large.gltf\"\n"
   "name: \"{{NAME}}\"\n"
   "materials {\n"
-  "  name: \"colormap\"\n"
+  "  name: \"texture\"\n"
   "  material: \"/builtins/materials/model_instanced.material\"\n"
   "  textures {\n"
   "    sampler: \"tex0\"\n"
-  "    texture: \"/example/assets/models/platformerkit/colormap.png\"\n"
+  "    texture: \"/example/assets/models/dungeon/dungeon_texture.png\"\n"
   "  }\n"
   "}\n"
   ""
+  position {
+    y: -0.75
+  }
 }
 embedded_components {
   id: "collisionobject"
   type: "collisionobject"
   data: "type: COLLISION_OBJECT_TYPE_DYNAMIC\n"
   "mass: 1.0\n"
-  "friction: 0.1\n"
-  "restitution: 0.5\n"
+  "friction: 1.0\n"
+  "restitution: 0.2\n"
   "group: \"crate\"\n"
   "mask: \"player\"\n"
   "mask: \"floor\"\n"
   "mask: \"wall\"\n"
+  "mask: \"crate\"\n"
   "embedded_collision_shape {\n"
   "  shapes {\n"
   "    shape_type: TYPE_BOX\n"
   "    position {\n"
-  "      y: 0.25\n"
   "    }\n"
   "    rotation {\n"
   "    }\n"
   "    index: 0\n"
   "    count: 3\n"
   "  }\n"
-  "  data: 0.25\n"
-  "  data: 0.25\n"
-  "  data: 0.25\n"
+  "  data: 0.75\n"
+  "  data: 0.75\n"
+  "  data: 0.75\n"
   "}\n"
   ""
 }

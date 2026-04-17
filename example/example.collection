@@ -22,7 +22,7 @@ embedded_instances {
   "embedded_components {\n"
   "  id: \"cratefactory\"\n"
   "  type: \"factory\"\n"
-  "  data: \"prototype: \\\"/example/crate.go\\\"\\n"
+  "  data: \"prototype: \\\"/example/props/crate.go\\\"\\n"
   "\"\n"
   "}\n"
   ""

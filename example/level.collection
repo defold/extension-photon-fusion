@@ -47,6 +47,41 @@ instances {
     z: -8.0
   }
 }
+instances {
+  id: "crate"
+  prototype: "/example/props/crate.go"
+  position {
+    x: 3.0
+    y: 1.0
+    z: -12.0
+  }
+}
+instances {
+  id: "crate1"
+  prototype: "/example/props/crate.go"
+  position {
+    x: 8.0
+    y: 1.0
+    z: -9.0
+  }
+  rotation {
+    y: 0.25881904
+    w: 0.9659258
+  }
+}
+instances {
+  id: "crate2"
+  prototype: "/example/props/crate.go"
+  position {
+    x: 4.0
+    y: 1.0
+    z: -9.0
+  }
+  rotation {
+    y: -0.17364818
+    w: 0.9848077
+  }
+}
 scale_along_z: 0
 embedded_instances {
   id: "floor"

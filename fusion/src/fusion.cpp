@@ -29,6 +29,10 @@
 #include "LogOutput.h"
 #include "CreateRoomOptions.h"
 
+#include "fusion_messages.h"
+#include "fusion_header.h"
+#include "fusion_helpers.h"
+
 
 class FusionDefoldLogOutput : public PhotonCommon::LogOutput
 {
@@ -124,24 +128,24 @@ struct FusionCtx
     {
         memset((void*)this, 0, sizeof(*this));
         m_ConnectionState = PhotonMatchmaking::ConnectionState::Disconnected;
-        m_EventOnObjectReady = dmHashString64("OnObjectReady");
-        m_EventOnSubObjectCreated = dmHashString64("OnSubObjectCreated");
-        m_EventOnObjectDestroyed = dmHashString64("OnObjectDestroyed");
-        m_EventOnSubObjectDestroyed = dmHashString64("OnSubObjectDestroyed");
-        m_EventOnObjectOwnerChanged = dmHashString64("OnObjectOwnerChanged");
-        m_EventOnObjectPredictionOverride = dmHashString64("OnObjectPredictionOverride");
-        m_EventOnLobbyStats = dmHashString64("OnLobbyStats");
-        m_EventOnRoomJoined = dmHashString64("OnRoomJoined");
-        m_EventOnRoomLeft = dmHashString64("OnRoomLeft");
-        m_EventOnRpc = dmHashString64("OnRpc");
-        m_EventOnSceneChange = dmHashString64("OnSceneChange");
-        m_EventOnDestroyedMapActor = dmHashString64("OnDestroyedMapActor");
-        m_EventOnInterestEnter = dmHashString64("OnInterestEnter");
-        m_EventOnInterestExit = dmHashString64("OnInterestExit");
-        m_EventOnForcedDisconnect = dmHashString64("OnForcedDisconnect");
-        m_EventOnFusionStart = dmHashString64("OnFusionStart");
-        m_EventOnConnected = dmHashString64("OnConnected");
-        m_EventOnDisconnected = dmHashString64("OnDisconnected");
+        m_EventOnObjectReady = dmHashString64("on_object_ready");
+        m_EventOnSubObjectCreated = dmHashString64("on_sub_object_created");
+        m_EventOnObjectDestroyed = dmHashString64("on_object_destroyed");
+        m_EventOnSubObjectDestroyed = dmHashString64("on_sub_object_destroyed");
+        m_EventOnObjectOwnerChanged = dmHashString64("on_object_owner_changed");
+        m_EventOnObjectPredictionOverride = dmHashString64("on_object_prediction_override");
+        m_EventOnLobbyStats = dmHashString64("on_lobby_stats");
+        m_EventOnRoomJoined = dmHashString64("on_room_joined");
+        m_EventOnRoomLeft = dmHashString64("on_room_left");
+        m_EventOnRpc = dmHashString64("on_rpc");
+        m_EventOnSceneChange = dmHashString64("on_scene_change");
+        m_EventOnDestroyedMapActor = dmHashString64("on_destroyed_map_actor");
+        m_EventOnInterestEnter = dmHashString64("on_interest_enter");
+        m_EventOnInterestExit = dmHashString64("on_interest_exit");
+        m_EventOnForcedDisconnect = dmHashString64("on_forced_disconnect");
+        m_EventOnFusionStart = dmHashString64("on_fusion_start");
+        m_EventOnConnected = dmHashString64("on_connected");
+        m_EventOnDisconnected = dmHashString64("on_disconnected");
     }
 };
 
@@ -151,265 +155,15 @@ FusionCtx* g_Ctx = 0;
  * Helpers
  *************************/
 
-static PhotonCommon::StringType ToStringType(const char* text)
+template <typename T>
+static dmGameObject::Result PostDDF(const T* message, dmhash_t id)
 {
-    return PhotonCommon::to_string_type((const PhotonCommon::CharType*)text);
+    dmMessage::URL receiver;
+    receiver.m_Path = id;
+    receiver.m_Socket = dmGameObject::GetMessageSocket(g_Ctx->m_Collection);
+    return dmGameObject::PostDDF(message, 0, &receiver, 0, false);
 }
 
-static void LuaTableToStdStringVector(lua_State* L, int index, std::vector<PhotonCommon::StringType>& v)
-{
-    if (lua_type(L, index) == LUA_TTABLE)
-    {
-        size_t len = lua_objlen(L, index);
-        for (int i = 0; i < len; i++)
-        {
-            lua_pushinteger(L, i + 1);
-            lua_gettable(L, index);
-            const char* s = luaL_checkstring(L, -1);
-            v[i] = ToStringType(s);
-            lua_pop(L, 1); // pop value
-        }
-    }
-}
-
-static void LuaTableToPropertyMap(lua_State* L, int index, PhotonMatchmaking::PropertyMap map)
-{
-    if (lua_type(L, index) == LUA_TTABLE)
-    {
-        lua_pushnil(L);
-        while (lua_next(L, index) != 0)
-        {
-            const char* key = luaL_checkstring(L, -2);
-            int type = lua_type(L, -1);
-            if (type == LUA_TNUMBER)
-            {
-                map[ToStringType(key)] = luaL_checknumber(L, -1);
-            }
-            else if (type == LUA_TBOOLEAN)
-            {
-                map[ToStringType(key)] = lua_toboolean(L, -1);
-            }
-            else if (type == LUA_TSTRING)
-            {
-                map[ToStringType(key)] = ToStringType(luaL_checkstring(L, -1));
-            }
-            
-            lua_pop(L, 1); // pop value
-        }
-    }
-}
-
-static int32_t CompressFloat(float f)
-{
-    int32_t result;
-    memcpy(&result, &f, sizeof(float));
-    return result;
-    // return *(uint32_t*)&f;
-}
-static float DecompressFloat(int32_t f)
-{
-    float result;
-    memcpy(&result, &f, sizeof(float));
-    return result;
-    // return *(float*)&f;
-}
-
-static size_t PushFloat(SharedMode::Word* words, float f)
-{
-    words[0] = CompressFloat(f);
-    return 1;
-}
-static size_t PopFloat(SharedMode::Word* words, float* out)
-{
-    *out = DecompressFloat(words[0]);
-    return 1;
-}
-static size_t PushPoint3(SharedMode::Word* words, dmVMath::Point3& p3)
-{
-    words[0] = CompressFloat(p3.getX());
-    words[1] = CompressFloat(p3.getY());
-    words[2] = CompressFloat(p3.getZ());
-    return 3;
-}
-static size_t PopPoint3(SharedMode::Word* words, dmVMath::Point3* out)
-{
-    out->setX(DecompressFloat(words[0]));
-    out->setY(DecompressFloat(words[1]));
-    out->setZ(DecompressFloat(words[2]));
-    return 3;
-}
-static size_t PushVector3(SharedMode::Word* words, dmVMath::Vector3& v3)
-{
-    words[0] = CompressFloat(v3.getX());
-    words[1] = CompressFloat(v3.getY());
-    words[2] = CompressFloat(v3.getZ());
-    return 3;
-}
-static size_t PopVector3(SharedMode::Word* words, dmVMath::Vector3* out)
-{
-    out->setX(DecompressFloat(words[0]));
-    out->setY(DecompressFloat(words[1]));
-    out->setZ(DecompressFloat(words[2]));
-    return 3;
-}
-static size_t PushQuat(SharedMode::Word* words, dmVMath::Quat& q)
-{
-    words[0] = CompressFloat(q.getX());
-    words[1] = CompressFloat(q.getY());
-    words[2] = CompressFloat(q.getZ());
-    words[3] = CompressFloat(q.getW());
-    return 4;
-}
-static size_t PopQuat(SharedMode::Word* words, dmVMath::Quat* out)
-{
-    out->setX(DecompressFloat(words[0]));
-    out->setY(DecompressFloat(words[1]));
-    out->setZ(DecompressFloat(words[2]));
-    out->setW(DecompressFloat(words[3]));
-    return 4;
-}
-static size_t PushUint32(SharedMode::Word* words, uint32_t i)
-{
-    words[0] = i;
-    return 1;
-}
-static size_t PopUint32(SharedMode::Word* words, uint32_t* out)
-{
-    *out = (uint32_t)words[0];
-    return 1;
-}
-static size_t PushHash(SharedMode::Word* words, dmhash_t h)
-{
-    int32_t high = (int32_t)((h >> 32) & 0xFFFFFFFFu);
-    int32_t low = (int32_t)(h & 0xFFFFFFFFu);
-    words[0] = high;
-    words[1] = low;
-    return 2;
-}
-static size_t PopHash(SharedMode::Word* words, dmhash_t* out)
-{
-    uint64_t high = (uint32_t)(words[0]);
-    uint64_t low  = (uint32_t)(words[1]);
-    dmhash_t h = (dmhash_t)((high << 32) | low);
-    *out = h;
-    return 2;
-}
-
-static size_t PushHash(uint8_t* a, dmhash_t h)
-{
-    a[0] = (h & 0xFF00000000000000) >> 56;
-    a[1] = (h & 0x00FF000000000000) >> 48;
-    a[2] = (h & 0x0000FF0000000000) >> 40;
-    a[3] = (h & 0x000000FF00000000) >> 32;
-    a[4] = (h & 0x00000000FF000000) >> 24;
-    a[5] = (h & 0x0000000000FF0000) >> 16;
-    a[6] = (h & 0x000000000000FF00) >> 8;
-    a[7] = (h & 0x00000000000000FF) >> 0;
-    return 8;
-}
-static size_t PopHash(uint8_t* a, dmhash_t* out)
-{
-    *out = (dmhash_t)(
-        ((uint64_t)a[0]) << 56 |
-        ((uint64_t)a[1]) << 48 |
-        ((uint64_t)a[2]) << 40 |
-        ((uint64_t)a[3]) << 32 |
-        ((uint64_t)a[4]) << 24 |
-        ((uint64_t)a[5]) << 16 |
-        ((uint64_t)a[6]) << 8 |
-        ((uint64_t)a[7]) << 0
-        );
-    return 8;
-}
-static size_t PushUint32(uint8_t* a, uint32_t i)
-{
-    a[0] = (i & 0xFF000000) >> 24;
-    a[1] = (i & 0x00FF0000) >> 16;
-    a[2] = (i & 0x0000FF00) >> 8;
-    a[3] = (i & 0x000000FF) >> 0;
-    return 4;
-}
-static size_t PopUint32(uint8_t* a, uint32_t* out)
-{
-    *out = (uint32_t)(
-        ((uint64_t)a[0]) << 24 |
-        ((uint64_t)a[1]) << 16 |
-        ((uint64_t)a[2]) << 8 |
-        ((uint64_t)a[3]) << 0
-        );
-    return 4;
-}
-static size_t PushUint16(uint8_t* a, uint16_t i)
-{
-    a[0] = (i & 0x0000FF00) >> 8;
-    a[1] = (i & 0x000000FF) >> 0;
-    return 2;
-}
-static size_t PopUint16(uint8_t* a, uint16_t* out)
-{
-    *out = (uint16_t)(
-        ((uint64_t)a[0]) << 8 |
-        ((uint64_t)a[1]) << 0
-        );
-    return 2;
-}
-static size_t PushUint8(uint8_t* a, uint8_t i)
-{
-    a[0] = i;
-    return 1;
-}
-static size_t PopUint8(uint8_t* a, uint8_t* out)
-{
-    *out = (uint8_t)(a[0]);
-    return 1;
-}
-
-static void PrintStack(lua_State *L) {
-    int top = lua_gettop(L);
-    int i;
-
-    dmLogInfo("stack top = %d", top);
-
-    for (i = 1; i <= top; i++) {
-        int t = lua_type(L, i);
-
-        switch (t) {
-            case LUA_TSTRING:
-                dmLogInfo("[%d] %s: '%s'", i, lua_typename(L, t), lua_tostring(L, i));
-                break;
-
-            case LUA_TBOOLEAN:
-                dmLogInfo("[%d] %s: %s", i, lua_typename(L, t), lua_toboolean(L, i) ? "true" : "false");
-                break;
-
-            case LUA_TNUMBER:
-                dmLogInfo("[%d] %s: %g", i, lua_typename(L, t), lua_tonumber(L, i));
-                break;
-
-            case LUA_TNIL:
-                dmLogInfo("[%d] %s: nil", i, lua_typename(L, t));
-                break;
-
-            default:
-                /* userdata, table, function, thread, lightuserdata */
-                dmLogInfo("[%d] %s: %p", i, lua_typename(L, t), lua_topointer(L, i));
-                break;
-        }
-    }
-}
-
-static dmhash_t ResolveId(lua_State* L, int index)
-{
-    if (lua_isnoneornil(L, index))
-    {
-        dmGameObject::HInstance caller_instance = dmScript::CheckGOInstance(L);
-        return dmGameObject::GetIdentifier(caller_instance);
-    }
-    else
-    {
-        return dmScript::CheckHashOrString(L, index);
-    }
-}
 
 /******
  * Object handlers
@@ -896,7 +650,6 @@ static dmGameObject::Result DoRegisterObject(dmhash_t id, dmMessage::URL* factor
 /******
  * Fusion callbacks
  *************************/
-
 static lua_State* SetupListener()
 {
     if (!dmScript::IsCallbackValid(g_Ctx->m_EventCallback))
@@ -955,8 +708,6 @@ static int CallListener(dmhash_t event_id, const char* v)
     return CallListener(L, 3, 0);
 }
 
-
-
 static void Fusion_OnObjectReady(SharedMode::ObjectRoot* object)
 {
     dmLogInfo("Fusion_OnObjectReady owner: %d local player: %d", object->Owner, g_Ctx->m_FusionClient->LocalPlayerId());
@@ -973,6 +724,10 @@ static void Fusion_OnObjectReady(SharedMode::ObjectRoot* object)
             dmScript::PushHash(L, fusion_object->m_Id);
             lua_setfield(L, -2, "id");
             CallListener(L, 3, 0);
+
+            FusionMessages::OnObjectReady msg;
+            msg.m_Id = fusion_object->m_Id;
+            dmGameObject::Result result = PostDDF(&msg, fusion_object->m_Id);
         }
     }
     else
@@ -1052,6 +807,11 @@ static void Fusion_OnObjectOwnerChanged(SharedMode::ObjectRoot* object)
         lua_setfield(L, -2, "owner");
         CallListener(L, 3, 0);
     }
+
+    FusionMessages::OnObjectOwnerChanged msg;
+    msg.m_Id = fusion_object->m_Id;
+    msg.m_Owner = object->Owner;
+    dmGameObject::Result result = PostDDF(&msg, fusion_object->m_Id);
 }
 static void Fusion_OnObjectPredictionOverride(SharedMode::ObjectRoot* object)
 {
@@ -1224,8 +984,6 @@ void Fusion_TickAfterFrameBegin(double dt)
         }
     }
 }
-
-
 
 
 /******

@@ -38,9 +38,9 @@ local function connect()
 	log("connect region: '%s' userid: '%s'", region, userid)
 	fusion.on_event(function(self, event_id, event)
 		if event_id == fusion.EVENT_OBJECT_OWNER_CHANGED then
-			msg.post(event.id, fusion.EVENT_OBJECT_OWNER_CHANGED, event)
+			--msg.post(event.id, fusion.EVENT_OBJECT_OWNER_CHANGED, event)
 		elseif event_id == fusion.EVENT_OBJECT_READY then
-			msg.post(event.id, fusion.EVENT_OBJECT_READY, event)
+			--msg.post(event.id, fusion.EVENT_OBJECT_READY, event)
 		end
 	end)
 
@@ -89,11 +89,6 @@ local function spawn_objects()
 	local scene = 1
 	local owner_mode = fusion.OWNERMODE_PLAYERATTACHED
 	fusion.spawn("#playerfactory", pos, rot, scene, owner_mode)
-
-	for i=1,5 do
-		local pos = vmath.vector3(math.random(5), math.random(5), math.random(5))
-		fusion.spawn("#cratefactory", pos, rot, scene, fusion.OWNERMODE_DYNAMIC)
-	end
 end
 
 function init(self)

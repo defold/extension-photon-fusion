@@ -1,0 +1,17 @@
+syntax = "proto2";
+package FusionMessages;
+
+import "ddf/ddf_extensions.proto";
+import "script/ddf_script.proto";
+
+message OnObjectReady
+{
+    required uint64 id = 1;
+}
+
+
+message OnObjectOwnerChanged
+{
+    required uint64 id = 1;
+    required uint32 owner = 2;
+}
