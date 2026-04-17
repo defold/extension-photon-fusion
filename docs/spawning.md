@@ -3,6 +3,7 @@ title: Photon Fusion - Spawning
 brief: Networked spawning turns a local scene instantiation into a coordinated event across all peers.
 ---
 
+# Spawning
 In single-player, instantiating a scene creates a local game object. In multiplayer, the same operation must create that game object on every connected client and assign it a network identity so the replication system can track it. This is what networked spawning does - it turns a local scene instantiation into a coordinated event across all peers.
 
 Despawning is the reverse: it removes the object from every client and frees its network identity. Late-joining clients automatically receive the current set of spawned objects when they enter the room.

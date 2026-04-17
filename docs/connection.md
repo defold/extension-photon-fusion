@@ -3,6 +3,8 @@ title: Photon Fusion - Connection
 brief: This manual covers the full connection lifecycle, from initialization and server connection through room creation, joining and disconnection.
 ---
 
+# Connection & Matchmaking
+
 Before any game objects can sync, players must connect to a server and be grouped into a shared session. Photon uses a two-tier architecture: clients first connect to a master server for matchmaking, then get routed to a game server hosting a room. A room is an isolated session where a fixed group of players share game state, exchange RPCs and replicate objects.
 
 This page covers the full connection lifecycle, from initialization and server connection through room creation, joining and disconnection.
