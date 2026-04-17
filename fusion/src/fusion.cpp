@@ -2969,7 +2969,7 @@ static dmExtension::Result UpdateFusion(dmExtension::Params* params)
     return dmExtension::RESULT_OK;
 }
 
-static dmExtension::Result OnEventFusion(dmExtension::ExtensionEvent* event, dmExtension::Params* params)
+static dmExtension::Result OnEventFusion(dmExtension::Event* event, dmExtension::Params* params)
 {
     return dmExtension::RESULT_OK;
 }
