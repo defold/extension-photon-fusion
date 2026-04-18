@@ -41,27 +41,27 @@ public:
     ~FusionDefoldLogOutput() {};
     void LogTrace(const PhotonCommon::CharType* message)
     {
-        dmLogDebug("[internal] %s", (char*)message);
+        dmLogDebug("[internal][T] %s", (char*)message);
     }
 
     void LogDebug(const PhotonCommon::CharType* message)
     {
-        dmLogDebug("[internal] %s", (char*)message);
+        dmLogDebug("[internal][D] %s", (char*)message);
     }
 
     void LogInfo(const PhotonCommon::CharType* message)
     {
-        dmLogInfo("[internal] %s", (char*)message);
+        dmLogInfo("[internal][I] %s", (char*)message);
     }
 
     void LogWarning(const PhotonCommon::CharType* message)
     {
-        dmLogWarning("[internal] %s", (char*)message);
+        dmLogWarning("[internal][W] %s", (char*)message);
     }
 
     void LogError(const PhotonCommon::CharType* message)
     {
-        dmLogError("[internal] %s", (char*)message);
+        dmLogError("[internal][E] %s", (char*)message);
     }
 };
 
