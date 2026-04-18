@@ -60,19 +60,8 @@ local id = fusion.spawn(factory_url, position, rotation, scene, owner_mode)
 * [Replication](replication) — Authority, replication modes and properties
 * [Spawning](spawning) — Dynamic networked objects and sub-objects
 * [RPCs](rpcs) — Remote procedure calls
-* [Physics Replication] — Forecast smoothing for rigid bodies
-
-
-## License
-
-You must read and agree to the [Exit Games End User License Terms](https://github.com/defold/extension-photon-fusion/blob/master/fusion/license.txt) before using Photon Fusion in your own project.
+* [Physics Replication](physics-replication) — Forecast smoothing for rigid bodies
 
 
 ## Example
-
-[Refer to the example project](https://github.com/defold/extension-photon-fusion/blob/master/example) to see a complete example of how the integration works. Video showing four connected clients:
-
-
-## Source code
-
-The source code is available on [GitHub](https://github.com/defold/extension-photon-fusion)
+[Refer to the example project](https://github.com/defold/extension-photon-fusion/blob/master/example) to see a complete example of how the integration works.
