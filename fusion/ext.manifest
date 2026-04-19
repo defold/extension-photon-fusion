@@ -29,4 +29,4 @@ platforms:
     web:
         context:
             defines:  ["_EG_EMSCRIPTEN_PLATFORM"]
-            flags:    ["-std=c++17"]
+            flags:    ["-std=c++20"]
