@@ -60,9 +60,9 @@ fusion = {}
 ---@param app_version string
 function fusion.init(app_id,app_version) end
 function fusion.init_from_settings() end
----@param user string
----@param server string
-function fusion.connect(user,server) end
+---@param user string?
+---@param region string?
+function fusion.connect(user,region) end
 function fusion.disconnect() end
 function fusion.reconnect() end
 function fusion.start() end
@@ -123,7 +123,7 @@ function fusion.unregister_object(id) end
 ---@param index number
 ---@param sequence number
 ---@param data string
-function fusion.scene_change(index,sequence,data) end
+function fusion.change_scene(index,sequence,data) end
 ---@param target_player number
 ---@param data string
 ---@return boolean ok

@@ -1071,7 +1071,6 @@ static int InitFromSettings(lua_State* L)
 /** Connect Fusion
  * @name connect
  * @string user
- * @string server
  */
 static int Connect(lua_State* L)
 {
@@ -1243,7 +1242,7 @@ static int GetState(lua_State* L)
  */
 static int GetDisconnectCause(lua_State* L)
 {
-    dmLogInfo("GetState");
+    dmLogInfo("GetDisconnectCause");
 
     if (!g_Ctx->m_FusionClient)
     {

@@ -25,8 +25,10 @@
     parameters:
     - name: user
       type: string
-    - name: server
+      optional: True
+    - name: region
       type: string
+      optional: True
 
   - name: disconnect
     type: function
@@ -256,7 +258,7 @@
       type: string
       optional: True
 
-  - name: scene_change
+  - name: change_scene
     type: function
     desc: |
       Change scene.
