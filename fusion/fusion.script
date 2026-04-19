@@ -2,8 +2,7 @@ go.property("factory", msg.url())
 go.property("is_scene_object", false)
 
 function init(self)
-	--print("init", go.get_id(), "date", os.date(), "has_authority", fusion.has_authority(), "has_owner", fusion.has_owner())
-	assert(go.exists(self.factory))
+	assert(go.exists(self.factory), "The provided factory url is not correct")
 	local scene = 0
 	if self.is_scene_object then
 		print("calling fusion.register_scene_object()", go.get_id())
