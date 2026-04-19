@@ -82,9 +82,21 @@ local function start_game()
 	end)
 end
 
-local function spawn_objects()
-	log("spawn objects")
-	local pos = vmath.vector3(math.random(5), 0, math.random(5))
+local function load_level()
+	local url = "#levelfactory"
+	local status = collectionfactory.get_status(url)
+	if status == collectionfactory.STATUS_UNLOADED then
+		collectionfactory.load(url, function() end)
+	end
+	wait_until(function()
+		return collectionfactory.get_status(url) == collectionfactory.STATUS_LOADED
+	end)
+	collectionfactory.create(url)
+end
+
+local function spawn_player()
+	log("spawn player")
+	local pos = vmath.vector3(math.random(15), 4, -math.random(15))
 	local rot = nil
 	local scene = 1
 	local owner_mode = fusion.OWNERMODE_PLAYERATTACHED
@@ -108,7 +120,8 @@ function init(self)
 		end
 		join_room()
 		start_game()
-		spawn_objects()
+		load_level()
+		spawn_player()
 		print("GAME STARTED")
 	end)()
 end

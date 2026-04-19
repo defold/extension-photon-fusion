@@ -1,11 +1,4 @@
 name: "example"
-collection_instances {
-  id: "level"
-  collection: "/example/level.collection"
-  position {
-    z: 8.0
-  }
-}
 scale_along_z: 0
 embedded_instances {
   id: "game"
@@ -23,6 +16,13 @@ embedded_instances {
   "  id: \"cratefactory\"\n"
   "  type: \"factory\"\n"
   "  data: \"prototype: \\\"/example/props/crate.go\\\"\\n"
+  "\"\n"
+  "}\n"
+  "embedded_components {\n"
+  "  id: \"levelfactory\"\n"
+  "  type: \"collectionfactory\"\n"
+  "  data: \"prototype: \\\"/example/level.collection\\\"\\n"
+  "load_dynamically: true\\n"
   "\"\n"
   "}\n"
   ""
