@@ -957,7 +957,7 @@ void Fusion_OnFusionStart()
 // send object properties
 void Fusion_TickBeforeFrameEnd()
 {
-    // dmLogInfo("TickBeforeFrameEnd");
+    dmLogInfo("TickBeforeFrameEnd");
     dmHashTable<dmhash_t, FusionObject*>::Iterator iter = g_Ctx->m_FusionObjects.GetIterator();
     while(iter.Next())
     {
@@ -973,7 +973,7 @@ void Fusion_TickBeforeFrameEnd()
 // updated object properties with received data
 void Fusion_TickAfterFrameBegin(double dt)
 {
-    // dmLogInfo("Fusion_TickAfterFrameBegin");
+    dmLogInfo("Fusion_TickAfterFrameBegin");
     dmHashTable<dmhash_t, FusionObject*>::Iterator iter = g_Ctx->m_FusionObjects.GetIterator();
     while(iter.Next())
     {
@@ -1105,6 +1105,11 @@ static int Connect(lua_State* L)
     g_Ctx->m_FusionClient->GetRealtimeClient().Connect(connectOptions);
     dmLogInfo("Connect calling connect done");
 
+    // const char* region = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "fusion.default_region", "eu");
+    // if (lua_isstring(L, 2))
+    // {
+    //     region = luaL_checkstring(L, 2);
+    // }
     // g_Ctx->m_FusionClient->GetRealtimeClient().SelectRegion(ToStringType(region));
 
     return 0;
