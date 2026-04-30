@@ -2934,9 +2934,9 @@ dmExtension::Result UpdateFusion(dmExtension::Params* params)
     return dmExtension::RESULT_OK;
 }
 
-dmExtension::Result OnEventFusion(dmExtension::Event* event, dmExtension::Params* params)
+void OnEventFusion(dmExtension::Params* params, const dmExtension::Event* event)
 {
-    return dmExtension::RESULT_OK;
+    dmLogInfo("OnEventFusion");
 }
 
 
@@ -2968,9 +2968,8 @@ static dmExtension::Result UpdateFusion(dmExtension::Params* params)
     return dmExtension::RESULT_OK;
 }
 
-static dmExtension::Result OnEventFusion(dmExtension::Event* event, dmExtension::Params* params)
+static void OnEventFusion(dmExtension::Params* params, const dmExtension::Event* event)
 {
-    return dmExtension::RESULT_OK;
 }
 
 #endif
