@@ -992,6 +992,7 @@ void Fusion_TickAfterFrameBegin(double dt)
 
 static void DoInit(lua_State* L, const char* appId, const char* appVersion)
 {
+    dmLogInfo("DoInit");
     g_Ctx->m_FusionObjects.SetCapacity(100, 100);
 
     if (g_Ctx->m_FusionClient)
@@ -1070,7 +1071,7 @@ static int InitFromSettings(lua_State* L)
 
 /** Connect Fusion
  * @name connect
- * @string user
+ * @string [user]
  */
 static int Connect(lua_State* L)
 {
@@ -1081,6 +1082,7 @@ static int Connect(lua_State* L)
         luaL_error(L, "No Fusion client");
         return 0;
     }
+    dmLogInfo("Connect IsConnected");
     if (g_Ctx->m_FusionClient->GetRealtimeClient().IsConnected())
     {
         luaL_error(L, "Fusion is already connected");
@@ -1089,6 +1091,7 @@ static int Connect(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 0);
 
+    dmLogInfo("Connect ConnectOptions");
     PhotonMatchmaking::ConnectOptions connectOptions = PhotonMatchmaking::ConnectOptions();
     connectOptions.useBackgroundSendReceiveThread = false;
 
@@ -1099,13 +1102,8 @@ static int Connect(lua_State* L)
     }
     connectOptions.username = (const PhotonCommon::CharType*)username;
 
-    const char* region = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "fusion.default_region", "eu");
-    if (lua_isstring(L, 2))
-    {
-        region = luaL_checkstring(L, 2);
-    }
-
     g_Ctx->m_FusionClient->GetRealtimeClient().Connect(connectOptions);
+    dmLogInfo("Connect calling connect done");
 
     // g_Ctx->m_FusionClient->GetRealtimeClient().SelectRegion(ToStringType(region));
 
@@ -1261,6 +1259,7 @@ static int GetDisconnectCause(lua_State* L)
 
 static PhotonMatchmaking::CreateRoomOptions ParseCreateRoomOptions(lua_State* L, int index)
 {
+    dmLogInfo("ParseCreateRoomOptions");
     PhotonMatchmaking::CreateRoomOptions options = PhotonMatchmaking::CreateRoomOptions();
     if (lua_type(L, index) == LUA_TTABLE)
     {
@@ -1321,6 +1320,7 @@ static PhotonMatchmaking::CreateRoomOptions ParseCreateRoomOptions(lua_State* L,
 
 static PhotonMatchmaking::MatchmakingOptions ParseMatchmakingOptions(lua_State* L, int index)
 {
+    dmLogInfo("ParseMatchmakingOptions");
     PhotonMatchmaking::MatchmakingOptions options = PhotonMatchmaking::MatchmakingOptions();
     if (lua_type(L, index) == LUA_TTABLE)
     {
@@ -1352,6 +1352,7 @@ static PhotonMatchmaking::MatchmakingOptions ParseMatchmakingOptions(lua_State* 
 
 static PhotonMatchmaking::JoinRoomOptions ParseJoinRoomOptions(lua_State* L, int index)
 {
+    dmLogInfo("ParseJoinRoomOptions");
     PhotonMatchmaking::JoinRoomOptions options = PhotonMatchmaking::JoinRoomOptions();
     if (lua_type(L, index) == LUA_TTABLE)
     {
@@ -1605,6 +1606,7 @@ static int LeaveRoom(lua_State* L)
  */
 static int IsConnected(lua_State* L)
 {
+    dmLogInfo("IsConnected");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1624,6 +1626,7 @@ static int IsConnected(lua_State* L)
  */
 static int IsRunning(lua_State* L)
 {
+    dmLogInfo("IsRunning");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1643,6 +1646,7 @@ static int IsRunning(lua_State* L)
  */
 static int IsStarted(lua_State* L)
 {
+    dmLogInfo("IsStarted");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1661,6 +1665,7 @@ static int IsStarted(lua_State* L)
  */
 static int IsInRoom(lua_State* L)
 {
+    dmLogInfo("IsInRoom");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1680,6 +1685,7 @@ static int IsInRoom(lua_State* L)
  */
 static int EnableDebug(lua_State* L)
 {
+    dmLogInfo("EnableDebug");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1690,15 +1696,15 @@ static int EnableDebug(lua_State* L)
     bool enable = lua_toboolean(L, 1);
     if (enable)
     {
-        // g_Ctx->m_FusionClient->Photon().SetLogLevel(ExitGames::Common::DebugLevel::ALL);
         PhotonCommon::AddLogOutput(g_Ctx->m_FusionDefoldLogOutput);
         PhotonCommon::SetLogLevelsFromBitmask(0xFF);
+        PhotonCommon::LogEnable(PhotonCommon::LogLevel::Trace);
     }
     else
     {
-        // g_Ctx->m_FusionClient->Photon().SetLogLevel(ExitGames::Common::DebugLevel::OFF);
         PhotonCommon::RemoveLogOutput(g_Ctx->m_FusionDefoldLogOutput);
         PhotonCommon::SetLogLevelsFromBitmask(0x0);
+        PhotonCommon::LogDisable(PhotonCommon::LogLevel::Trace);
     }
     return 0;
 }
@@ -1715,6 +1721,7 @@ static int EnableDebug(lua_State* L)
  */
 static int RegisterSceneObject(lua_State* L)
 {
+    dmLogInfo("RegisterSceneObject");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1743,6 +1750,7 @@ static int RegisterSceneObject(lua_State* L)
 
     bool alreadyPopulated;
     SharedMode::ObjectSpecialFlags specialFlags = SharedMode::ObjectSpecialFlags::None;
+    dmLogInfo("Calling CreateSceneObject");
     SharedMode::ObjectRoot* object = g_Ctx->m_FusionClient->CreateSceneObject(alreadyPopulated,
                                                                               wordsCount,
                                                                               type,
@@ -1752,6 +1760,7 @@ static int RegisterSceneObject(lua_State* L)
                                                                               factory_url->m_Path,
                                                                               ownerMode,
                                                                               specialFlags);
+    dmLogInfo("Calling CreateSceneObject - done");
     FusionObject* fusion_object = CreateFusionObject(id, object);
     if (!fusion_object)
     {
@@ -1784,6 +1793,7 @@ static int RegisterSceneObject(lua_State* L)
  */
 static int SpawnObject(lua_State* L)
 {
+    dmLogInfo("SpawnObject");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1870,6 +1880,7 @@ static int SpawnObject(lua_State* L)
  */
 static int DespawnObject(lua_State* L)
 {
+    dmLogInfo("DespawnObject");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1898,6 +1909,7 @@ static int DespawnObject(lua_State* L)
  */
 static int RegisterObject(lua_State* L)
 {
+    dmLogInfo("RegisterObject");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1928,6 +1940,7 @@ static int RegisterObject(lua_State* L)
  */
 static int UnregisterObject(lua_State* L)
 {
+    dmLogInfo("UnregisterObject");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1955,6 +1968,7 @@ static int UnregisterObject(lua_State* L)
  */
 static int ChangeScene(lua_State* L)
 {
+    dmLogInfo("ChangeScene");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1981,6 +1995,7 @@ static int ChangeScene(lua_State* L)
  */
 static int SendRpc(lua_State* L)
 {
+    dmLogInfo("SendRpc");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -2012,6 +2027,7 @@ static int SendRpc(lua_State* L)
  */
 static int OnEvent(lua_State* L)
 {
+    dmLogInfo("OnEvent");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -2032,6 +2048,7 @@ static int OnEvent(lua_State* L)
  */
 static int GetLocalPlayerId(lua_State* L)
 {
+    dmLogInfo("GetLocalPlayerId");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -2053,6 +2070,7 @@ static int GetLocalPlayerId(lua_State* L)
  */
 static int GetOwnerId(lua_State* L)
 {
+    dmLogInfo("GetOwnerId");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -2085,6 +2103,7 @@ static int GetOwnerId(lua_State* L)
  */
 static int HasAuthority(lua_State* L)
 {
+    dmLogInfo("HasAuthority");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -2116,6 +2135,7 @@ static int HasAuthority(lua_State* L)
  */
 static int HasOwner(lua_State* L)
 {
+    dmLogInfo("HasOwner");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -2146,6 +2166,7 @@ static int HasOwner(lua_State* L)
  */
 static int WantAuthority(lua_State* L)
 {
+    dmLogInfo("WantAuthority");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -2289,6 +2310,7 @@ static int ResetSendRate(lua_State* L)
  */
 static int PlayerCount(lua_State* L)
 {
+    dmLogInfo("PlayerCount");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -2309,6 +2331,7 @@ static int PlayerCount(lua_State* L)
  */
 static int IsMasterClient(lua_State* L)
 {
+    dmLogInfo("IsMasterClient");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -2842,6 +2865,7 @@ static void LuaInit(lua_State* L)
 
 dmExtension::Result AppInitializeFusion(dmExtension::AppParams* params)
 {
+    dmLogInfo("AppInitializeFusion");
     return dmExtension::RESULT_OK;
 }
 

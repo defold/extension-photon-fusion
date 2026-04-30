@@ -8,7 +8,7 @@ embedded_components {
   data: "mesh: \"/example/assets/models/characters/Knight.glb\"\n"
   "skeleton: \"/example/assets/models/characters/Knight.glb\"\n"
   "animations: \"/example/assets/models/characters/Knight.glb\"\n"
-  "default_animation: \"T-Pose\"\n"
+  "default_animation: \"Unarmed_Melee_Attack_Punch_A\"\n"
   "name: \"{{NAME}}\"\n"
   "materials {\n"
   "  name: \"knight_texture\"\n"

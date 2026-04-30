@@ -1,0 +1,143 @@
+local button = require("example.utils.button")
+local log = require("example.utils.log")
+
+local function wait_until(fn)
+	local co = coroutine.running()
+	assert(co, "You must call this from within a coroutine")
+	local wait = true
+	timer.delay(0, true, function(self, handle, time_elapsed)
+		if fn() then
+			wait = false
+			timer.cancel(handle)
+		end
+		local ok, err = coroutine.resume(co)
+		if not ok then
+			log(err)
+			timer.cancel(handle)
+			sys.exit(1)
+		end
+	end)
+	while wait do
+		coroutine.yield()
+	end
+end
+
+local function wait(seconds)
+	local co = coroutine.running()
+	assert(co, "You must call this from within a coroutine")
+	timer.delay(seconds, false, function(self, handle, time_elapsed)
+		local ok, err = coroutine.resume(co)
+		if not ok then
+			log(err)
+			sys.exit(1)
+		end
+	end)
+	coroutine.yield()
+end
+
+local function connect()
+	local userid = ("user" .. math.random(999999))
+	log("connect userid: '%s'", userid)
+	fusion.on_event(function(self, event_id, event)
+		if event_id == fusion.EVENT_OBJECT_OWNER_CHANGED then
+			--msg.post(event.id, fusion.EVENT_OBJECT_OWNER_CHANGED, event)
+		elseif event_id == fusion.EVENT_OBJECT_READY then
+			--msg.post(event.id, fusion.EVENT_OBJECT_READY, event)
+		end
+	end)
+
+	fusion.connect(userid)
+	log("connect after")
+	wait_until(function()
+		log("connect waiting until connected")
+		return fusion.is_connected()
+	end)
+end
+
+local function join_room(name)
+	name = name or "foo"
+	log("join_room name: '%s'", name)
+	local room_options = {
+		is_visible = true,
+		is_open = true,
+		max_players = 10,
+		lobby_name = name,
+		custom_properties = {
+			foo = "bar",
+			baz = 1,
+			boo = true
+		}
+	}
+	local matchmaking_options = {
+		max_players = 10,
+		lobby_name = name,
+	}
+	fusion.join_or_create_room_random(room_options, matchmaking_options)
+	wait_until(function()
+		return fusion.is_in_room()
+	end)
+end
+
+local function start_game()
+	log("start game")
+	fusion.start()
+	wait_until(function()
+		return fusion.is_started()
+	end)
+end
+
+local function load_level()
+	local url = "#levelfactory"
+	local status = collectionfactory.get_status(url)
+	if status == collectionfactory.STATUS_UNLOADED then
+		collectionfactory.load(url, function() end)
+	end
+	wait_until(function()
+		return collectionfactory.get_status(url) == collectionfactory.STATUS_LOADED
+	end)
+	collectionfactory.create(url)
+end
+
+local function spawn_player()
+	log("spawn player")
+	local pos = vmath.vector3(math.random(15), 4, -math.random(15))
+	local rot = nil
+	local scene = 1
+	local owner_mode = fusion.OWNERMODE_PLAYERATTACHED
+	fusion.spawn("#playerfactory", pos, rot, scene, owner_mode)
+end
+
+
+local function start_connect_flow()
+	coroutine.wrap(function()
+		fusion.init_from_settings()
+		fusion.enable_debug(true)
+		connect()
+		join_room()
+		start_game()
+		load_level()
+		spawn_player()
+		print("GAME STARTED")
+	end)()
+end
+
+function init(self)
+	msg.post(".", "acquire_input_focus")
+	sys.set_error_handler(function(source, message, traceback)
+		log("ERROR: (%s) %s %s", source, message, traceback)
+	end)
+	local index = sys.get_config_int("project.instance_index", 1)
+	log(index)
+	math.randomseed(os.time() + index)
+end
+
+
+function on_input(self, action_id, action)
+	if button(self, "connect_button", action) then
+		button.hide("connect_button")
+		start_connect_flow()
+	end
+	if action.released and action_id == hash("toggle_debug") then
+		msg.post("@system:", "toggle_physics_debug")
+	end
+end
