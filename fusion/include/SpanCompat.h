@@ -1,7 +1,6 @@
 // Copyright Exit Games GmbH. All Rights Reserved.
 
-#ifndef SHAREDCLIENT_SPAN_COMPAT_H
-#define SHAREDCLIENT_SPAN_COMPAT_H
+#pragma once
 
 #if __has_include(<span>)
 #include <span>
@@ -23,12 +22,12 @@ namespace std {
         constexpr size_t size() const noexcept { return size_; }
         constexpr bool empty() const noexcept { return size_ == 0; }
         constexpr T& operator[](size_t idx) const { return ptr_[idx]; }
+        constexpr T* begin() const noexcept { return ptr_; }
+        constexpr T* end() const noexcept { return ptr_ + size_; }
 
     private:
         T* ptr_;
         size_t size_;
     };
 }
-#endif
-
 #endif

@@ -2,6 +2,10 @@
 
 #pragma once
 
+#include "Error.h"
+#include "Result.h"
+#include "Task.h"
+
 namespace PhotonMatchmaking {
     enum class ErrorCode : int {
         Ok = 0,
@@ -40,4 +44,12 @@ namespace PhotonMatchmaking {
         NotInRoom = 51,
         InvalidState = 52,
     };
+
+    template<typename T = void>
+    using Result = PhotonCommon::Result<T, ErrorCode>;
+
+    template<typename T = void>
+    using Task = PhotonCommon::Task<T>;
+
+    using Error = PhotonCommon::Error<ErrorCode>;
 } // namespace PhotonMatchmaking

@@ -6,6 +6,7 @@
 #include "StringType.h"
 #include "PropertyValue.h"
 
+PhotonCommon::CharType* ToCharType(const char* text);
 PhotonCommon::StringType ToStringType(const char* text);
 void LuaTableToStdStringVector(lua_State* L, int index, std::vector<PhotonCommon::StringType>& v);
 void LuaTableToPropertyMap(lua_State* L, int index, PhotonMatchmaking::PropertyMap map);

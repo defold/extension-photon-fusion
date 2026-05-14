@@ -1,7 +1,6 @@
 // Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
-#ifndef STRINGHEAP_H
-#define STRINGHEAP_H
+#pragma once
 
 #include <cstdint>
 #include <vector>
@@ -10,7 +9,7 @@
 #include "Buffers.h"
 #include "StringType.h"
 
-namespace SharedMode
+namespace FusionCore
 {
 
     enum class StringMessage {
@@ -21,6 +20,7 @@ namespace SharedMode
         WrongSize = 4,
         EmptyString = 5,
         InvalidHandle = 6,
+        EmptyHeap = 7,
     };
 
     static constexpr uint32_t HEAP_BUFFER_PADDING = 256;
@@ -73,12 +73,15 @@ namespace SharedMode
 
         std::vector<SegmentInfo> SegmentInfos;
 
-        NetworkedStringHeap(uint32_t size)
+        NetworkedStringHeap(uint32_t size = 0)
         {
             SegmentInfos.resize(256);
-
             entries.resize(128);
             free_by_offset.resize(128);
+
+            if (size == 0) {
+                return;
+            }
 
             free_by_offset[0] = {0, size};
             freeSegmentCount = 1;
@@ -106,8 +109,9 @@ namespace SharedMode
         uint64_t find_free_or_append(uint32_t size);
 
         void coalesce_free();
+
+        void ensure_free_capacity();
     };
 }
 
-
-#endif //STRINGHEAP_H
+#include "SharedModeCompat.h"

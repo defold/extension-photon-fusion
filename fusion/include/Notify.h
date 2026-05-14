@@ -1,17 +1,16 @@
 // Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
-#ifndef SHAREDCLIENT_NOTIFY_H
-#define SHAREDCLIENT_NOTIFY_H
+#pragma once
 
 #include "Misc.h"
 #include <cstdint>
 #include <optional>
 
-namespace SharedMode {
+namespace FusionCore {
 	class Client;
 }
 
-namespace SharedMode::Notify {
+namespace FusionCore::Notify {
 	constexpr int RECV_RESULT_NONE = 0;
 	constexpr int RECV_RESULT_DISCONNECT = 2;
 
@@ -19,6 +18,8 @@ namespace SharedMode::Notify {
 	constexpr int MAX_MTU_BYTES_TOTAL = 1280;
 	constexpr int MAX_MTU_BYTES_PAYLOAD = MAX_MTU_BYTES_TOTAL - DEFAULT_HEADERS;
 	constexpr int PACKET_MTU_BYTES = MAX_MTU_BYTES_PAYLOAD / 8 * 8;
+
+	constexpr uint8_t NOTIFY_VERSION = 1;
 
 	constexpr uint8_t FRAG_FLAG_DATA = 1 << 1;
 	constexpr uint8_t FRAG_FLAG_ACKS = 1 << 2;
@@ -28,7 +29,7 @@ namespace SharedMode::Notify {
 
 	struct FragmentHeader {
 		uint8_t Flags;
-		uint8_t _reserved_0;
+		uint8_t Version;
 		uint8_t Channel;
 		uint8_t _reserved_1;
 
@@ -41,6 +42,7 @@ namespace SharedMode::Notify {
 	};
 
 	static_assert(offsetof(FragmentHeader, Flags) == 0);
+	static_assert(offsetof(FragmentHeader, Version) == 1);
 	static_assert(offsetof(FragmentHeader, Channel) == 2);
 	static_assert(offsetof(FragmentHeader, Sequence) == 4);
 	static_assert(offsetof(FragmentHeader, AckSequence) == 6);
@@ -57,7 +59,7 @@ namespace SharedMode::Notify {
 		FragmentGroup *Next{nullptr};
 
 		void *User{nullptr};
-		SharedMode::Data Data{};
+		FusionCore::Data Data{};
 
 		std::optional<bool> WasLost{};
 		std::optional<bool> WasDelivered{};
@@ -88,7 +90,7 @@ namespace SharedMode::Notify {
 		double SendTime{0};
 
 		FragmentHeader Header{};
-		SharedMode::Data Data{};
+		FusionCore::Data Data{};
 
 		Fragment() = default;
 		Fragment(const Fragment &) = delete;
@@ -164,6 +166,7 @@ namespace SharedMode::Notify {
 
 		Channel Game{1, false};
 		Channel Streaming{2, true};
+		Channel Unreliable{3, false};
 
 		bool CanQueue(Channel &chan);
 
@@ -194,4 +197,4 @@ namespace SharedMode::Notify {
 	};
 }
 
-#endif
+#include "SharedModeCompat.h"

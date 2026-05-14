@@ -12,3 +12,8 @@ message OnObjectOwnerChanged
     required uint64 id = 1;
     required uint32 owner = 2;
 }
+message OnObjectOwnerAssigned
+{
+    required uint64 id = 1;
+    required uint32 owner = 2;
+}

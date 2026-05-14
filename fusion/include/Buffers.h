@@ -1,14 +1,13 @@
 // Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
-#ifndef SHAREDCLIENT_BUFFERS_H
-#define SHAREDCLIENT_BUFFERS_H
+#pragma once
 
 #include "Misc.h"
 #include "Aliases.h"
 #include <cstring>
 #include <optional>
 
-namespace SharedMode {
+namespace FusionCore {
 	class WriteBuffer;
 
 	struct ResetPoint {
@@ -58,7 +57,7 @@ namespace SharedMode {
 
 		uint64_t ULongVar();
 
-		SharedMode::Data ReadDataAll();
+		FusionCore::Data ReadDataAll();
 
 		int64_t LongVar() { return ZigZagDecode(static_cast<int64_t>(ULongVar())); }
 
@@ -68,7 +67,7 @@ namespace SharedMode {
 		int32_t IntVar() { return static_cast<int32_t>(LongVar()); }
 		uint32_t UIntVar() { return static_cast<uint32_t>(ULongVar()); }
 
-		void ReadData(SharedMode::Data &data);
+		void ReadData(FusionCore::Data &data);
 
 		void Skip(const size_t length) { Use(length); }
 
@@ -76,13 +75,15 @@ namespace SharedMode {
 
 		bool Bool() { return Byte() == 1; }
 
-		PlayerId Player() { return UIntVar(); }
+		PlayerId Player() { return UShortVar(); }
+		FusionCore::Map ReadMap() { return UShortVar(); }
 
 		void Versions(int32_t &plugin_version, int32_t &client_version);
 
-		SharedMode::ObjectId ReadObjectId() {
-			SharedMode::ObjectId id{};
+		FusionCore::ObjectId ReadObjectId() {
+			FusionCore::ObjectId id{};
 			id.Origin = Player();
+			id.Map = ReadMap();
 			id.Counter = UIntVar();
 			return id;
 		}
@@ -125,7 +126,7 @@ namespace SharedMode {
 			d.Length = _offset;
 
 			_offset = 0;
-			_buffer = SharedMode::Data{};
+			_buffer = FusionCore::Data{};
 
 			return d;
 		}
@@ -134,12 +135,14 @@ namespace SharedMode {
 
 		[[nodiscard]] size_t Offset() const { return _offset; }
 
-		void WriteObjectId(const SharedMode::ObjectId id) {
+		void WriteObjectId(const FusionCore::ObjectId id) {
 			Player(id.Origin);
+			WriteMap(id.Map);
 			UIntVar(id.Counter);
 		}
 
-		void Player(const PlayerId id) { UIntVar(id); }
+		void Player(const PlayerId id) { UShortVar(id); }
+		void WriteMap(const FusionCore::Map map) { UShortVar(map); }
 
 		WriteFlags Flags() {
 			const auto offset = Use(1);
@@ -181,12 +184,12 @@ namespace SharedMode {
 
 		void Clear() const;
 
-		void WriteDataAll(const SharedMode::Data &data);
+		void WriteDataAll(const FusionCore::Data &data);
 
-		void WriteData(const SharedMode::Data &data);
+		void WriteData(const FusionCore::Data &data);
 
 		friend struct ResetPoint;
 	};
 }
 
-#endif
+#include "SharedModeCompat.h"

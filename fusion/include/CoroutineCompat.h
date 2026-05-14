@@ -5,16 +5,6 @@
 #if __has_include(<coroutine>)
     #include <coroutine>
 
-#elif __has_include(<experimental/coroutine>)
-    #include <experimental/coroutine>
-    namespace std {
-        using std::experimental::coroutine_handle;
-        using std::experimental::coroutine_traits;
-        using std::experimental::suspend_never;
-        using std::experimental::suspend_always;
-        using std::experimental::noop_coroutine;
-    }
-
 #elif defined(__clang__)
     #include <cstddef>
     namespace std {
@@ -92,6 +82,16 @@
         struct coroutine_traits {
             using promise_type = typename R::promise_type;
         };
+    }
+
+#elif __has_include(<experimental/coroutine>)
+    #include <experimental/coroutine>
+    namespace std {
+        using std::experimental::coroutine_handle;
+        using std::experimental::coroutine_traits;
+        using std::experimental::suspend_never;
+        using std::experimental::suspend_always;
+        using std::experimental::noop_coroutine;
     }
 
 #else

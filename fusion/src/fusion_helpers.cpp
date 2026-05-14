@@ -7,6 +7,11 @@
 #include "StringType.h"
 #include "PropertyValue.h"
 
+PhotonCommon::CharType* ToCharType(const char* text)
+{
+    return (PhotonCommon::CharType*)text;
+}
+
 PhotonCommon::StringType ToStringType(const char* text)
 {
     return PhotonCommon::to_string_type((const PhotonCommon::CharType*)text);

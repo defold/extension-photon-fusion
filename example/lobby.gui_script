@@ -47,9 +47,8 @@ local function connect()
 	end)
 
 	fusion.connect(userid)
-	log("connect after")
 	wait_until(function()
-		log("connect waiting until connected")
+		--log("connect waiting until connected")
 		return fusion.is_connected()
 	end)
 end

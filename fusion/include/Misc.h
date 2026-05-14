@@ -1,7 +1,6 @@
 // Copyright 2026 Exit Games GmbH. All Rights Reserved.
 
-#ifndef SHAREDCLIENT_MISC_C
-#define SHAREDCLIENT_MISC_C
+#pragma once
 
 #include <cassert>
 #include <chrono>
@@ -17,7 +16,7 @@
 
 using namespace std::chrono;
 
-namespace SharedMode {
+namespace FusionCore {
 
     std::string stringf(const char *format, ...);
 
@@ -116,6 +115,9 @@ namespace SharedMode {
         operator std::span<uint8_t>() const {
             return {Ptr, Length};
         }
+
+        uint8_t* data() const noexcept { return Ptr; }
+        size_t size() const noexcept { return Length; }
 
         Data Clone() const {
             Data copy{};
@@ -410,4 +412,4 @@ template<typename T>
     }
 }
 
-#endif
+#include "SharedModeCompat.h"

@@ -9,13 +9,39 @@
 #include "StringType.h"
 
 namespace PhotonCommon {
-    enum LogLevel : uint8_t {
+    enum class LogLevel : uint8_t {
         Trace = 1 << 0,
         Debug = 1 << 1,
         Info = 1 << 2,
         Warning = 1 << 3,
         Error = 1 << 4
     };
+
+    constexpr LogLevel operator&(LogLevel a, LogLevel b) {
+        return static_cast<LogLevel>(static_cast<uint8_t>(a) & static_cast<uint8_t>(b));
+    }
+
+    constexpr LogLevel operator|(LogLevel a, LogLevel b) {
+        return static_cast<LogLevel>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+    }
+
+    constexpr LogLevel operator~(LogLevel a) {
+        return static_cast<LogLevel>(~static_cast<uint8_t>(a));
+    }
+
+    constexpr LogLevel& operator|=(LogLevel& a, LogLevel b) {
+        a = a | b;
+        return a;
+    }
+
+    constexpr LogLevel& operator&=(LogLevel& a, LogLevel b) {
+        a = a & b;
+        return a;
+    }
+
+    constexpr bool operator!=(LogLevel a, int b) {
+        return static_cast<uint8_t>(a) != static_cast<uint8_t>(b);
+    }
 
     bool TryGetLogLevelFromString(const CharType *logLevelString, LogLevel &outLogLevel);
 

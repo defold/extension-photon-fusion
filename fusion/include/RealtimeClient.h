@@ -40,6 +40,7 @@
 #include <vector>
 
 namespace PhotonMatchmaking {
+
     class RealtimeClient final {
     public:
         explicit RealtimeClient(const ClientConstructOptions& options);

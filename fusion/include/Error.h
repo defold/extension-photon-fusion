@@ -2,12 +2,17 @@
 
 #pragma once
 
-#include "ErrorCode.h"
 #include "StringType.h"
 
-namespace PhotonMatchmaking {
-    struct Error {
-        ErrorCode code = ErrorCode::Unknown;
-        PhotonCommon::StringType message;
+namespace PhotonCommon {
+    enum class ErrorCode : int {
+        Ok = 0,
+        Unknown = -1,
     };
-} // namespace PhotonMatchmaking
+
+    template<typename CodeT = ErrorCode>
+    struct Error {
+        CodeT code = CodeT::Unknown;
+        StringType message;
+    };
+} // namespace PhotonCommon

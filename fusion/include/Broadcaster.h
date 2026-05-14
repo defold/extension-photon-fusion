@@ -60,6 +60,32 @@ namespace PhotonCommon {
 
         void operator()(Args... args) { Broadcast(std::forward<Args>(args)...); }
 
+        // Invokes all subscribers and returns true if any returned true. Intended
+        // for predicate / "vote" patterns where R is bool. No subscribers -> false.
+        bool BroadcastAny(Args... args) {
+            static_assert(std::is_convertible_v<R, bool>, "BroadcastAny requires a bool-convertible return type");
+            ++dispatchDepth;
+
+            bool result = false;
+            const std::size_t count = packed.size();
+            for (std::size_t i = 0; i < count; ++i) {
+                Entry& e = packed[i];
+                if (e.state->subscribed && !e.state->blocked) {
+                    if (e.callback(args...)) {
+                        result = true;
+                    }
+                }
+            }
+            if (--dispatchDepth == 0) {
+                for (std::function<void()>& op : deferred) {
+                    op();
+                }
+                deferred.clear();
+                Compact();
+            }
+            return result;
+        }
+
         void UnsubscribeAll() {
             for (Entry& e : packed) {
                 e.state->subscribed = false;
