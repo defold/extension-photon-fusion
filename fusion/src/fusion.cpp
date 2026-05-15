@@ -594,7 +594,7 @@ static void DeserializeFusionObject(FusionObject* fusion_object)
     }
 }
 
-static dmGameObject::Result DoRegisterObject(dmhash_t id, dmMessage::URL* factory_url, uint32_t scene, FusionCore::ObjectOwnerModes owner_mode)
+static dmGameObject::Result DoCreateObject(dmhash_t id, dmMessage::URL* factory_url, uint32_t scene, FusionCore::ObjectOwnerModes owner_mode)
 {
     if (HasSharedObject(id))
     {
@@ -1007,7 +1007,7 @@ void Fusion_OnFusionStart()
 // send object properties
 void Fusion_TickBeforeFrameEnd()
 {
-    dmLogInfo("TickBeforeFrameEnd");
+    // dmLogInfo("TickBeforeFrameEnd");
     dmHashTable<dmhash_t, FusionObject*>::Iterator iter = g_Ctx->m_FusionObjects.GetIterator();
     while(iter.Next())
     {
@@ -1023,7 +1023,7 @@ void Fusion_TickBeforeFrameEnd()
 // updated object properties with received data
 void Fusion_TickAfterFrameBegin(double dt)
 {
-    dmLogInfo("Fusion_TickAfterFrameBegin");
+    // dmLogInfo("Fusion_TickAfterFrameBegin");
     dmHashTable<dmhash_t, FusionObject*>::Iterator iter = g_Ctx->m_FusionObjects.GetIterator();
     while(iter.Next())
     {
@@ -1771,16 +1771,16 @@ static int EnableDebug(lua_State* L)
 
 
 
-/** Register a scene object
- * @name register_scene_object
- * @number scene
+/** Create a map object
+ * @name create_map_object
+ * @number map
  * @string factory_url
  * @number owner_mode
  * @string [id]
  */
-static int RegisterSceneObject(lua_State* L)
+static int CreateMapObject(lua_State* L)
 {
-    dmLogInfo("RegisterSceneObject");
+    dmLogInfo("CreateMapObject");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1810,7 +1810,7 @@ static int RegisterSceneObject(lua_State* L)
     bool alreadyPopulated;
     uint32_t engineFlags = 0;
     int32_t requiredObjectsCount = 0;
-    dmLogInfo("Calling CreateSceneObject");
+    dmLogInfo("Calling CreateMapObject");
     FusionCore::ObjectRoot* object = g_Ctx->m_FusionClient->CreateMapObject(alreadyPopulated,
                                                                               wordsCount,
                                                                               type,
@@ -1822,7 +1822,7 @@ static int RegisterSceneObject(lua_State* L)
                                                                               engineFlags,
                                                                               requiredObjectsCount);
 
-    dmLogInfo("Calling CreateSceneObject - done");
+    dmLogInfo("Calling CreateMapObject - done");
     FusionObject* fusion_object = CreateFusionObject(id, object);
     if (!fusion_object)
     {
@@ -1921,7 +1921,7 @@ static int SpawnObject(lua_State* L)
     uint32_t scene = (uint32_t)luaL_checknumber(L, 4);
     FusionCore::ObjectOwnerModes ownerMode = (FusionCore::ObjectOwnerModes)luaL_checknumber(L, 5);
 
-    r = DoRegisterObject(id, &factory_url, scene, ownerMode);
+    r = DoCreateObject(id, &factory_url, scene, ownerMode);
     if (dmGameObject::RESULT_OK != r)
     {
         luaL_error(L, "Unable to spawn game object");
@@ -1962,16 +1962,16 @@ static int DespawnObject(lua_State* L)
 }
 
 
-/** Register an object
- * @name register_object
+/** Create an object
+ * @name create_object
  * @number scene
  * @string factory_url
  * @number owner_mode
  * @string [id]
  */
-static int RegisterObject(lua_State* L)
+static int CreateObject(lua_State* L)
 {
-    dmLogInfo("RegisterObject");
+    dmLogInfo("CreateObject");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -1985,8 +1985,8 @@ static int RegisterObject(lua_State* L)
     FusionCore::ObjectOwnerModes ownerMode = (FusionCore::ObjectOwnerModes)luaL_checknumber(L, 3);
     dmhash_t id = ResolveId(L, 4);
 
-    dmLogInfo("RegisterObject %d", ownerMode);
-    dmGameObject::Result r = DoRegisterObject(id, factory_url, scene, ownerMode);
+    dmLogInfo("CreateObject %d", ownerMode);
+    dmGameObject::Result r = DoCreateObject(id, factory_url, scene, ownerMode);
     if (dmGameObject::RESULT_OK != r)
     {
         luaL_error(L, "Unable to create object");
@@ -1996,13 +1996,13 @@ static int RegisterObject(lua_State* L)
     return 0;
 }
 
-/** Unregister a previously registered object
- * @name unregister_object
+/** Destroy a previously created object
+ * @name destroy_object
  * @string [id]
  */
-static int UnregisterObject(lua_State* L)
+static int DestroyObject(lua_State* L)
 {
-    dmLogInfo("UnregisterObject");
+    dmLogInfo("DestroyObject");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -2161,7 +2161,7 @@ static int GetOwnerId(lua_State* L)
  */
 static int HasAuthority(lua_State* L)
 {
-    dmLogInfo("HasAuthority");
+    // dmLogInfo("HasAuthority");
     if (!g_Ctx->m_FusionClient)
     {
         luaL_error(L, "No Fusion client");
@@ -2634,9 +2634,9 @@ static const luaL_reg Module_methods[] = {
     // lifecycle
     { "spawn", SpawnObject },
     { "despawn", DespawnObject },
-    { "register_object", RegisterObject },
-    { "register_scene_object", RegisterSceneObject },
-    { "unregister_object", UnregisterObject },
+    { "create_object", CreateObject },
+    { "create_map_object", CreateMapObject },
+    { "destroy_object", DestroyObject },
     { "map_change", MapChange },
 
     // rpc and events

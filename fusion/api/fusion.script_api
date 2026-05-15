@@ -1,3 +1,4 @@
+# This is a generated file. Do not modify. Created using https://github.com/britzl/generatedocs
 - name: fusion
   type: table
   desc: Functions and constants for interacting with Photon Fusion
@@ -24,9 +25,6 @@
       Connect Fusion.
     parameters:
     - name: user
-      type: string
-      optional: True
-    - name: region
       type: string
       optional: True
 
@@ -173,12 +171,12 @@
     - name: enable
       type: boolean
 
-  - name: register_scene_object
+  - name: create_map_object
     type: function
     desc: |
-      Register a scene object.
+      Create a map object.
     parameters:
-    - name: scene
+    - name: map
       type: number
     - name: factory_url
       type: string
@@ -234,10 +232,10 @@
       type: string
       optional: True
 
-  - name: register_object
+  - name: create_object
     type: function
     desc: |
-      Register an object.
+      Create an object.
     parameters:
     - name: scene
       type: number
@@ -249,19 +247,19 @@
       type: string
       optional: True
 
-  - name: unregister_object
+  - name: destroy_object
     type: function
     desc: |
-      Unregister a previously registered object.
+      Destroy a previously created object.
     parameters:
     - name: id
       type: string
       optional: True
 
-  - name: change_scene
+  - name: map_change
     type: function
     desc: |
-      Change scene.
+      Change map.
     parameters:
     - name: index
       type: number
@@ -382,7 +380,7 @@
         
       optional: True
 
-  - name: set_send_rate
+  - name: set_room_send_rate
     type: function
     desc: |
       Set the send rate of an object. This decided how much bandwidth to allocate
@@ -410,7 +408,7 @@
         
       optional: True
 
-  - name: reset_send_rate
+  - name: reset_room_send_rate
     type: function
     desc: |
       Reset the send rate of an object.
@@ -667,15 +665,25 @@
     desc: |
       EVENT_SUB_OBJECT_DESTROYED
 
+  - name: EVENT_OBJECT_FORCE_ALIVE
+    type: number
+    desc: |
+      EVENT_OBJECT_FORCE_ALIVE
+
+  - name: EVENT_SUB_OBJECT_FORCE_ALIVE
+    type: number
+    desc: |
+      EVENT_SUB_OBJECT_FORCE_ALIVE
+
   - name: EVENT_OBJECT_OWNER_CHANGED
     type: number
     desc: |
       EVENT_OBJECT_OWNER_CHANGED
 
-  - name: EVENT_OBJECT_PREDICTION_OVERRIDE
+  - name: EVENT_PREDICTION_OVERRIDE
     type: number
     desc: |
-      EVENT_OBJECT_PREDICTION_OVERRIDE
+      EVENT_PREDICTION_OVERRIDE
 
   - name: EVENT_LOBBY_STATS
     type: number
@@ -697,10 +705,10 @@
     desc: |
       EVENT_RPC
 
-  - name: EVENT_SCENE_CHANGE
+  - name: EVENT_MAP_CHANGE
     type: number
     desc: |
-      EVENT_SCENE_CHANGE
+      EVENT_MAP_CHANGE
 
   - name: EVENT_DESTROYED_MAP_ACTOR
     type: number
