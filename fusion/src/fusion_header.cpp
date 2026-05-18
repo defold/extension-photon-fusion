@@ -30,6 +30,18 @@ size_t PopFloat(SharedMode::Word* words, float* out)
     *out = DecompressFloat(words[0]);
     return 1;
 }
+
+size_t PushBool(SharedMode::Word* words, bool b)
+{
+    words[0] = b;
+    return 1;
+}
+size_t PopBool(SharedMode::Word* words, bool* out)
+{
+    *out = (bool)words[0];
+    return 1;
+}
+
 size_t PushPoint3(SharedMode::Word* words, dmVMath::Point3& p3)
 {
     words[0] = CompressFloat(p3.getX());
@@ -57,6 +69,22 @@ size_t PopVector3(SharedMode::Word* words, dmVMath::Vector3* out)
     out->setY(DecompressFloat(words[1]));
     out->setZ(DecompressFloat(words[2]));
     return 3;
+}
+size_t PushVector4(SharedMode::Word* words, dmVMath::Vector4& v4)
+{
+    words[0] = CompressFloat(v4.getX());
+    words[1] = CompressFloat(v4.getY());
+    words[2] = CompressFloat(v4.getZ());
+    words[3] = CompressFloat(v4.getW());
+    return 4;
+}
+size_t PopVector4(SharedMode::Word* words, dmVMath::Vector4* out)
+{
+    out->setX(DecompressFloat(words[0]));
+    out->setY(DecompressFloat(words[1]));
+    out->setZ(DecompressFloat(words[2]));
+    out->setW(DecompressFloat(words[3]));
+    return 4;
 }
 size_t PushQuat(SharedMode::Word* words, dmVMath::Quat& q)
 {

@@ -109,4 +109,17 @@ dmhash_t ResolveId(lua_State* L, int index)
     }
 }
 
+float Lerpf(float t, float a, float b)
+{
+    return a + (b - a) * t;
+}
+
+dmVMath::Point3 LerpPoint(float t, dmVMath::Point3 a, dmVMath::Point3 b)
+{
+    return dmVMath::Point3(
+        a.getX() + (b.getX() - a.getX()) * t,
+        a.getY() + (b.getY() - a.getY()) * t,
+        a.getZ() + (b.getZ() - a.getZ()) * t);
+}
+
 #endif

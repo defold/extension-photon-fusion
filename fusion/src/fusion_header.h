@@ -7,12 +7,16 @@
 
 int32_t CompressFloat(float f);
 float DecompressFloat(int32_t f);
+size_t PushBool(SharedMode::Word* words, bool b);
+size_t PopBool(SharedMode::Word* words, bool* out);
 size_t PushFloat(SharedMode::Word* words, float f);
 size_t PopFloat(SharedMode::Word* words, float* out);
 size_t PushPoint3(SharedMode::Word* words, dmVMath::Point3& p3);
 size_t PopPoint3(SharedMode::Word* words, dmVMath::Point3* out);
 size_t PushVector3(SharedMode::Word* words, dmVMath::Vector3& v3);
 size_t PopVector3(SharedMode::Word* words, dmVMath::Vector3* out);
+size_t PushVector4(SharedMode::Word* words, dmVMath::Vector4& v4);
+size_t PopVector4(SharedMode::Word* words, dmVMath::Vector4* out);
 size_t PushQuat(SharedMode::Word* words, dmVMath::Quat& q);
 size_t PopQuat(SharedMode::Word* words, dmVMath::Quat* out);
 size_t PushUint32(SharedMode::Word* words, uint32_t i);

@@ -12,5 +12,7 @@ void LuaTableToStdStringVector(lua_State* L, int index, std::vector<PhotonCommon
 void LuaTableToPropertyMap(lua_State* L, int index, PhotonMatchmaking::PropertyMap map);
 void PrintStack(lua_State *L);
 dmhash_t ResolveId(lua_State* L, int index);
+float Lerpf(float t, float a, float b);
+dmVMath::Point3 LerpPoint(float t, dmVMath::Point3 a, dmVMath::Point3 b);
 
 #endif
