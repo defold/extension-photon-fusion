@@ -248,7 +248,7 @@
       type: string
     - name: owner_mode
       type: number
-    - name: script_properties
+    - name: options
       type: table
     - name: id
       type: string
@@ -688,6 +688,16 @@
     type: number
     desc: |
       OBJECT_OWNER_PLAYER_ID
+
+  - name: REPLICATION_MODE_NONE
+    type: number
+    desc: |
+      REPLICATION_MODE_NONE
+
+  - name: REPLICATION_MODE_AUTO
+    type: number
+    desc: |
+      REPLICATION_MODE_AUTO
 
   - name: EVENT_OBJECT_READY
     type: number

@@ -39,6 +39,8 @@ This is a generated file. Do not modify. Created using https://github.com/britzl
 ---@field MASTER_CLIENT_PLAYER_ID number
 ---@field PLUGIN_PLAYER_ID number
 ---@field OBJECT_OWNER_PLAYER_ID number
+---@field REPLICATION_MODE_NONE number
+---@field REPLICATION_MODE_AUTO number
 ---@field EVENT_OBJECT_READY number
 ---@field EVENT_SUB_OBJECT_CREATED number
 ---@field EVENT_OBJECT_DESTROYED number
@@ -120,9 +122,9 @@ function fusion.despawn(id) end
 ---@param map number
 ---@param factory_url string
 ---@param owner_mode number
----@param script_properties table
+---@param options table
 ---@param id string?
-function fusion.create_object(map,factory_url,owner_mode,script_properties,id) end
+function fusion.create_object(map,factory_url,owner_mode,options,id) end
 ---@param id string?
 function fusion.destroy_object(id) end
 ---@param index number
