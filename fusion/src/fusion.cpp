@@ -65,6 +65,7 @@ public:
     }
 };
 
+const uint32_t MAX_OBJECT_HEADER_SIZE = 16*1024;
 
 struct FusionObject
 {
@@ -92,6 +93,9 @@ enum ScriptPropertyType {
     HASH,
 };
 
+typedef dmHashTable<dmhash_t, dmArray<dmhash_t>*> ScriptProperties;
+
+
 struct FusionCtx
 {
     dmResource::HFactory                           m_ResourceFactory;
@@ -99,11 +103,13 @@ struct FusionCtx
     dmGameObject::HCollection                      m_Collection;
     uint64_t                                       m_Timestamp;
     FusionCore::Client*                            m_FusionClient;
-    dmHashTable<dmhash_t, FusionObject*>           m_FusionObjects;
+    dmHashTable<dmhash_t, FusionObject*>           m_FusionObjects;  // game object id to FusionObject lookup
+    dmHashTable<dmhash_t, dmArray<dmhash_t>*>      m_RpcSubscribers; // rpc event to subscribing game object id
     FusionDefoldLogOutput*                         m_FusionDefoldLogOutput;
     dmScript::LuaCallbackInfo*                     m_EventCallback;
     PhotonMatchmaking::ConnectionState             m_ConnectionState;
     bool                                           m_IsStarted;
+    lua_State*                                     m_LuaState;
 
     // Component type identifiers
     uint32_t                                       m_Scriptc;
@@ -172,15 +178,63 @@ static dmMessage::Result PostMessage(dmhash_t id, dmhash_t message_id, const cha
     return dmMessage::Post(sender, &receiver, message_id, user_data1, user_data2, descriptor, message, message_size, 0x0);
 }
 
-static int LuaToJson(lua_State* L, int index, char** json, size_t* json_len)
+static ScriptProperties* CheckScriptProperties(lua_State *L, int index)
 {
-    lua_pushvalue(L, index);
-    lua_insert(L, 1);
-    int result = dmScript::LuaToJson(L, json, json_len);
-    lua_remove(L, 1);
-    return result;
+    ScriptProperties* properties = new ScriptProperties();
+    properties->SetCapacity(15);
+
+    if (!lua_istable(L, index))
+    {
+        return properties;
+    }
+
+    index = LuaAbsIndex(L, index);
+
+    lua_pushnil(L);  // first key
+
+    while (lua_next(L, index) != 0) // key at -1, value at -1
+    {
+        dmhash_t key = dmScript::CheckHashOrString(L, -2);
+
+        dmArray<dmhash_t>* proplist = new dmArray<dmhash_t>();
+        if (properties->Full())
+        {
+            properties->OffsetCapacity(10);
+        }
+        properties->Put(key, proplist);
+
+        if (lua_istable(L, -1)) {
+            int nested_index = LuaAbsIndex(L, -1);
+
+            lua_pushnil(L);  // first nested key
+
+            while (lua_next(L, nested_index) != 0) // nexted key at -2, nested value at -1
+            {
+                dmhash_t value = dmScript::CheckHashOrString(L, -1);
+                if (proplist->Full())
+                {
+                    proplist->OffsetCapacity(10);
+                }
+                proplist->Push(value);
+
+                lua_pop(L, 1); // remove nested value, keep nested key for lua_next
+            }
+        }
+        lua_pop(L, 1); // remove value, keep key for lua_next
+    }
+    return properties;
 }
 
+static void FreeScriptProperties(ScriptProperties* properties)
+{
+    ScriptProperties::Iterator iter = properties->GetIterator();
+    while(iter.Next())
+    {
+        dmArray<dmhash_t>* array = iter.GetValue();
+        free(array);
+    }
+    free(properties);
+}
 
 /******
  * Object handlers
@@ -315,7 +369,6 @@ static bool CreateGameObject(dmhash_t id, const FusionCore::ObjectRoot* object)
 
 static FusionObject* CreateFusionObject(dmhash_t id, FusionCore::ObjectRoot* object)
 {
-    dmLogInfo("CreateFusionObject id %s objectroot = %p", dmHashReverseSafe64(id), object);
     FusionObject* fusion_object = FindFusionObjectFromObjectRoot(object);
     if (fusion_object)
     {
@@ -364,9 +417,9 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, uint8_t*
 {
     dmLogInfo("BuildObjectHeader for object '%s'", dmHashReverseSafe64(id));
     header_length = 0;
-    header_length += PushHash(header + header_length, factory_url->m_Socket);
-    header_length += PushHash(header + header_length, factory_url->m_Path);
-    header_length += PushHash(header + header_length, factory_url->m_Fragment);
+    header_length += PushHash(header + header_length, factory_url ? factory_url->m_Socket : 0);
+    header_length += PushHash(header + header_length, factory_url ? factory_url->m_Path : 0);
+    header_length += PushHash(header + header_length, factory_url ? factory_url->m_Fragment : 0);
 
     size_t component_count_offset = header_length;
     header_length += PushUint16(header + header_length, 0);
@@ -409,6 +462,8 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, uint8_t*
                 int prop_count = (*props)->Size();
                 for (int i = 0; i < prop_count; i++)
                 {
+                    // todo: this is not pretty - we are trying every property type one
+                    // after another since we have no type inspection in dmSDK
                     dmhash_t property_id = (**props)[i];
                     bool outbool;
                     dmhash_t outhash;
@@ -808,7 +863,7 @@ static dmGameObject::Result DoCreateObject(dmhash_t id, dmMessage::URL* factory_
         return dmGameObject::RESULT_INVALID_OPERATION;
     }
 
-    uint8_t header[1000];
+    uint8_t header[MAX_OBJECT_HEADER_SIZE];
     size_t header_length;
     size_t words_count;
     bool ok = BuildObjectHeader(id, factory_url, header, header_length, words_count, properties);
@@ -1081,6 +1136,7 @@ static void Fusion_OnRoomLeft()
     CallListener(g_FusionEventOnRoomLeft);
 }
 
+// push RPC message as a Lua table on the top of the stack
 static void PushRpc(lua_State* L, FusionCore::Rpc& rpc)
 {
     lua_newtable(L);
@@ -1110,41 +1166,83 @@ static void PushRpc(lua_State* L, FusionCore::Rpc& rpc)
     }
 }
 
+// serialize RPC message to a buffer
+static uint32_t RpcToMessage(lua_State* L, FusionCore::Rpc& rpc, char* buffer, size_t bufferSize)
+{
+    PushRpc(L, rpc);
+    uint32_t size = dmScript::CheckTable(L, buffer, bufferSize, lua_gettop(L));
+    lua_pop(L, 1);
+    return size;
+}
+
 static void Fusion_OnRpc(FusionCore::Rpc& rpc)
 {
-    dmLogInfo("Fusion_OnRpc");
     if (rpc.IsInternal())
     {
         return;
     }
 
+    dmLogInfo("Fusion_OnRpc %s", dmHashReverseSafe64(rpc.EventHash));
     lua_State* L = SetupListener();
     if(L)
     {
         dmScript::PushHash(L, g_FusionEventOnRpc);
         PushRpc(L, rpc);
         CallListener(L, 3, 0);
+    }
 
+    L = g_Ctx->m_LuaState;
+    const uint32_t MAX_MESSAGE_DATA_SIZE = 2048;
+    char DM_ALIGNED(16) msgbuffer[MAX_MESSAGE_DATA_SIZE];
+
+    // send to target object
+    if (rpc.TargetObject.IsSome())
+    {
         // also post a message to the target object if there is one
         FusionObject* target_object = FindFusionObjectFromObjectId(rpc.TargetObject);
         if (target_object)
         {
+            dmLogInfo("Fusion_OnRpc to target object %s", dmHashReverseSafe64(target_object->m_Id));
+
             // push RPC message as a Lua table and serialize to a buffer
-            const uint32_t MAX_MESSAGE_DATA_SIZE = 2048;
-            char DM_ALIGNED(16) msgbuffer[MAX_MESSAGE_DATA_SIZE];
-            PushRpc(L, rpc);
-            uint32_t msgsize = dmScript::CheckTable(L, msgbuffer, MAX_MESSAGE_DATA_SIZE, lua_gettop(L));
-            lua_pop(L, 1);
+            uint32_t msgsize = RpcToMessage(L, rpc, msgbuffer, MAX_MESSAGE_DATA_SIZE);
             
             // post serialized RPC message to target object
-            dmMessage::Result result = PostMessage(target_object->m_Id, rpc.EventHash,msgbuffer, msgsize);
+            dmMessage::Result result = PostMessage(target_object->m_Id, rpc.EventHash, msgbuffer, msgsize);
             if (result != dmMessage::RESULT_OK)
             {
                 dmLogError("Could not send RPC message to %s.", dmHashReverseSafe64(target_object->m_Id));
             }
         }
     }
+    else
+    {
+        dmLogInfo("Fusion_OnRpc broadcast");
+        dmArray<dmhash_t>** subscribers = g_Ctx->m_RpcSubscribers.Get(rpc.EventHash);
+        if (subscribers)
+        {
+            const int count = (*subscribers)->Size();
+            if (count > 0)
+            {
+                // push RPC message as a Lua table and serialize to a buffer
+                uint32_t msgsize = RpcToMessage(L, rpc, msgbuffer, MAX_MESSAGE_DATA_SIZE);
+
+                // post serialized RPC message to all subscribers
+                for (int i = 0; i < count; i++)
+                {
+                    dmhash_t subscriber_id = (**subscribers)[i];
+                    dmLogInfo("Fusion_OnRpc broadcast to %s", dmHashReverseSafe64(subscriber_id));
+                    dmMessage::Result result = PostMessage(subscriber_id, rpc.EventHash, msgbuffer, msgsize);
+                    if (result != dmMessage::RESULT_OK)
+                    {
+                        dmLogError("Could not send RPC message to %s.", dmHashReverseSafe64(subscriber_id));
+                    }
+                }
+            }
+        }
+    }
 }
+
 static void Fusion_OnRpcError(FusionCore::Rpc& rpc)
 {
     dmLogInfo("Fusion_OnRpcError");
@@ -1272,7 +1370,8 @@ void Fusion_TickAfterFrameBegin(double dt)
 static void DoInit(lua_State* L, const char* appId, const char* appVersion)
 {
     dmLogInfo("DoInit");
-    g_Ctx->m_FusionObjects.SetCapacity(100, 100);
+    g_Ctx->m_FusionObjects.SetCapacity(100);
+    g_Ctx->m_RpcSubscribers.SetCapacity(50);
 
     if (g_Ctx->m_FusionClient)
     {
@@ -1542,134 +1641,6 @@ static int GetDisconnectCause(lua_State* L)
     return 1;
 }
 
-
-
-
-static PhotonMatchmaking::CreateRoomOptions ParseCreateRoomOptions(lua_State* L, int index)
-{
-    dmLogInfo("ParseCreateRoomOptions");
-    PhotonMatchmaking::CreateRoomOptions options = PhotonMatchmaking::CreateRoomOptions();
-    if (lua_type(L, index) == LUA_TTABLE)
-    {
-        lua_pushnil(L);
-        while (lua_next(L, index) != 0)
-        {
-            const char* key = luaL_checkstring(L, -2);
-            if (strcmp("is_visible", key) == 0)
-            {
-                options.isVisible = lua_toboolean(L, -1);
-            }
-            else if (strcmp("is_open", key) == 0)
-            {
-                options.isOpen = lua_toboolean(L, -1);
-            }
-            else if (strcmp("max_players", key) == 0)
-            {
-                options.maxPlayers = lua_tonumber(L, -1);
-            }
-            else if (strcmp("player_ttl_ms", key) == 0)
-            {
-                options.playerTtlMs = lua_tonumber(L, -1);
-            }
-            else if (strcmp("empty_room_ttl_ms", key) == 0)
-            {
-                options.emptyRoomTtlMs = lua_tonumber(L, -1);
-            }
-            else if (strcmp("lobby_name", key) == 0)
-            {
-                const char* lobby_name = lua_tostring(L, -1);
-                options.lobbyName = ToStringType(lobby_name);
-            }
-            else if (strcmp("expected_users", key) == 0)
-            {
-                LuaTableToStdStringVector(L, lua_gettop(L), options.expectedUsers);
-            }
-            else if (strcmp("plugins", key) == 0)
-            {
-                LuaTableToStdStringVector(L, lua_gettop(L), options.plugins);
-            }
-            else if (strcmp("lobby_properties", key) == 0)
-            {
-                LuaTableToStdStringVector(L, lua_gettop(L), options.lobbyProperties);
-            }
-            else if (strcmp("custom_properties", key) == 0)
-            {
-                LuaTableToPropertyMap(L, lua_gettop(L), options.customProperties);
-            }
-            else
-            {
-                dmLogInfo("Unknown room option %s", key);
-            }
-            lua_pop(L, 1); // pop value
-        }
-    }
-    return options;
-}
-
-static PhotonMatchmaking::MatchmakingOptions ParseMatchmakingOptions(lua_State* L, int index)
-{
-    dmLogInfo("ParseMatchmakingOptions");
-    PhotonMatchmaking::MatchmakingOptions options = PhotonMatchmaking::MatchmakingOptions();
-    if (lua_type(L, index) == LUA_TTABLE)
-    {
-        lua_pushnil(L);
-        while (lua_next(L, index) != 0)
-        {
-            const char* key = luaL_checkstring(L, -2);
-            if (strcmp("max_players", key) == 0)
-            {
-                options.maxPlayers = lua_tonumber(L, -1);
-            }
-            else if (strcmp("lobby_name", key) == 0)
-            {
-                options.lobbyName = ToStringType(lua_tostring(L, -1));
-            }
-            else if (strcmp("expected_users", key) == 0)
-            {
-                LuaTableToStdStringVector(L, lua_gettop(L), options.expectedUsers);
-            }
-            else
-            {
-                dmLogInfo("Unknown matchmaking option %s", key);
-            }
-            lua_pop(L, 1); // pop value
-        }
-    }
-    return options;
-}
-
-static PhotonMatchmaking::JoinRoomOptions ParseJoinRoomOptions(lua_State* L, int index)
-{
-    dmLogInfo("ParseJoinRoomOptions");
-    PhotonMatchmaking::JoinRoomOptions options = PhotonMatchmaking::JoinRoomOptions();
-    if (lua_type(L, index) == LUA_TTABLE)
-    {
-        lua_pushnil(L);
-        while (lua_next(L, index) != 0)
-        {
-            const char* key = luaL_checkstring(L, -2);
-            if (strcmp("rejoin", key) == 0)
-            {
-                options.rejoin = lua_toboolean(L, -1);
-            }
-            else if (strcmp("cache_slice_index", key) == 0)
-            {
-                options.cacheSliceIndex = lua_tonumber(L, -1);
-            }
-            else if (strcmp("expected_users", key) == 0)
-            {
-                LuaTableToStdStringVector(L, -1, options.expectedUsers);
-            }
-            else
-            {
-                dmLogInfo("Unknown matchmaking option %s", key);
-            }
-            lua_pop(L, 1); // pop value
-        }
-    }
-    return options;
-}
-
 /** Join or create random room
  * @name join_or_create_room_random
  * @table create_room_options
@@ -1697,8 +1668,8 @@ static int JoinRandomOrCreateRoom(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 0);
 
-    PhotonMatchmaking::CreateRoomOptions roomOptions = ParseCreateRoomOptions(L, 1);
-    PhotonMatchmaking::MatchmakingOptions matchmakingOptions = ParseMatchmakingOptions(L, 2);
+    PhotonMatchmaking::CreateRoomOptions roomOptions = CheckCreateRoomOptions(L, 1);
+    PhotonMatchmaking::MatchmakingOptions matchmakingOptions = CheckMatchmakingOptions(L, 2);
 
     dmLogInfo("JoinRandomOrCreateRoom name = %s", (const char*)roomOptions.lobbyName.c_str());
     dmLogInfo("JoinRandomOrCreateRoom data = %s", (const char*)roomOptions.lobbyName.data());
@@ -1733,7 +1704,7 @@ static int JoinRandomRoom(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 0);
 
-    PhotonMatchmaking::MatchmakingOptions matchmakingOptions = ParseMatchmakingOptions(L, 1);
+    PhotonMatchmaking::MatchmakingOptions matchmakingOptions = CheckMatchmakingOptions(L, 1);
 
     dmLogInfo("JoinRandomRoom");
     g_Ctx->m_FusionClient->GetRealtimeClient().JoinRandomRoom(matchmakingOptions);
@@ -1769,7 +1740,7 @@ static int JoinRoom(lua_State* L)
     DM_LUA_STACK_CHECK(L, 0);
 
     const char* roomName = luaL_checkstring(L, 1);
-    PhotonMatchmaking::JoinRoomOptions joinOptions = ParseJoinRoomOptions(L, 2);
+    PhotonMatchmaking::JoinRoomOptions joinOptions = CheckJoinRoomOptions(L, 2);
 
     dmLogInfo("JoinRoom name = %s", roomName);
     g_Ctx->m_FusionClient->GetRealtimeClient().JoinRoom(ToStringType(roomName), joinOptions);
@@ -1806,8 +1777,8 @@ static int JoinOrCreateRoom(lua_State* L)
     DM_LUA_STACK_CHECK(L, 0);
 
     const char* roomName = luaL_checkstring(L, 1);
-    PhotonMatchmaking::CreateRoomOptions createOptions = ParseCreateRoomOptions(L, 2);
-    PhotonMatchmaking::JoinRoomOptions joinOptions = ParseJoinRoomOptions(L, 3);
+    PhotonMatchmaking::CreateRoomOptions createOptions = CheckCreateRoomOptions(L, 2);
+    PhotonMatchmaking::JoinRoomOptions joinOptions = CheckJoinRoomOptions(L, 3);
 
     dmLogInfo("JoinOrCreateRoom name = %s", roomName);
     g_Ctx->m_FusionClient->GetRealtimeClient().JoinOrCreateRoom(ToStringType(roomName), createOptions, joinOptions);
@@ -1844,7 +1815,7 @@ static int CreateRoom(lua_State* L)
     DM_LUA_STACK_CHECK(L, 0);
 
     const char* roomName = luaL_checkstring(L, 1);
-    PhotonMatchmaking::CreateRoomOptions createOptions = ParseCreateRoomOptions(L, 2);
+    PhotonMatchmaking::CreateRoomOptions createOptions = CheckCreateRoomOptions(L, 2);
 
     dmLogInfo("CreateRoom name = %s", roomName);
     g_Ctx->m_FusionClient->GetRealtimeClient().CreateRoom(ToStringType(roomName), createOptions);
@@ -1997,81 +1968,13 @@ static int EnableDebug(lua_State* L)
     return 0;
 }
 
-static int abs_index(lua_State *L, int index) {
-    if (index > 0 || index <= LUA_REGISTRYINDEX) {
-        return index;
-    }
-    return lua_gettop(L) + index + 1;
-}
-
-static void CheckScriptProperties(lua_State *L, int index,  dmHashTable<dmhash_t, dmArray<dmhash_t>*>* properties)
-{
-    if (!lua_istable(L, index))
-    {
-        return;
-    }
-
-    index = abs_index(L, index);
-
-    lua_pushnil(L);  /* first key */
-
-    while (lua_next(L, index) != 0) {
-        /*
-            Stack:
-            - key at -2
-            - value at -1
-        */
-
-        dmhash_t key = dmScript::CheckHashOrString(L, -2);
-
-        dmArray<dmhash_t>* proplist = new dmArray<dmhash_t>();
-        if (properties->Full())
-        {
-            properties->OffsetCapacity(10);
-        }
-        properties->Put(key, proplist);
-
-        if (lua_istable(L, -1)) {
-            int nested_index = abs_index(L, -1);
-
-            lua_pushnil(L);  /* first nested key */
-
-            while (lua_next(L, nested_index) != 0) {
-                /*
-                    Stack:
-                    - nested key at -2
-                    - nested value at -1
-                */
-
-                dmhash_t value = dmScript::CheckHashOrString(L, -1);
-                if (proplist->Full())
-                {
-                    proplist->OffsetCapacity(10);
-                }
-                proplist->Push(value);
-
-                /*
-                    Remove nested value.
-                    Keep nested key for lua_next.
-                */
-                lua_pop(L, 1);
-            }
-
-        }
-        /*
-            Remove value.
-            Keep key for lua_next.
-        */
-        lua_pop(L, 1);
-    }
-}
 
 
 /** Create a map object
  * @name create_map_object
  * @number map
- * @string factory_url
  * @number owner_mode
+ * @table properties Which script properties to sync
  * @string [id]
  */
 static int CreateMapObject(lua_State* L)
@@ -2085,19 +1988,16 @@ static int CreateMapObject(lua_State* L)
     DM_LUA_STACK_CHECK(L, 0);
 
     FusionCore::Map map = (FusionCore::Map)luaL_checknumber(L, 1);
-    dmMessage::URL* factory_url = dmScript::CheckURL(L, 2);
-    FusionCore::ObjectOwnerModes owner_mode = (FusionCore::ObjectOwnerModes)luaL_checknumber(L, 3);
+    FusionCore::ObjectOwnerModes owner_mode = (FusionCore::ObjectOwnerModes)luaL_checknumber(L, 2);
 
-    dmHashTable<dmhash_t, dmArray<dmhash_t>*> script_properties;
-    script_properties.SetCapacity(11, 32);
-    CheckScriptProperties(L, 4, &script_properties);
+    dmhash_t id = ResolveId(L, 4);
 
-    dmhash_t id = ResolveId(L, 5);
-
-    uint8_t header[1000];
+    uint8_t header[MAX_OBJECT_HEADER_SIZE];
     size_t header_length;
     size_t words_count;
-    bool ok = BuildObjectHeader(id, factory_url, header, header_length, words_count, &script_properties);
+    ScriptProperties* script_properties = CheckScriptProperties(L, 3);
+    bool ok = BuildObjectHeader(id, 0x0, header, header_length, words_count, script_properties);
+    FreeScriptProperties(script_properties);
     if (!ok)
     {
         luaL_error(L, "Unable to build object header");
@@ -2108,6 +2008,7 @@ static int CreateMapObject(lua_State* L)
     type.Hash = 0;
     type.WordCount = words_count + FusionCore::Object::ExtraTailWords;
 
+    uint32_t id32 = dmHashBuffer32(&id, 2); // not so pretty, but this is the best we can do
     bool already_populated;
     uint32_t engine_flags = 0;
     int32_t required_objects_count = 0;
@@ -2117,7 +2018,7 @@ static int CreateMapObject(lua_State* L)
                                                                               (PhotonCommon::CharType*)header,
                                                                               header_length,
                                                                               map,
-                                                                              factory_url->m_Path,
+                                                                              id32,
                                                                               owner_mode,
                                                                               engine_flags,
                                                                               required_objects_count);
@@ -2223,12 +2124,9 @@ static int SpawnObject(lua_State* L)
     FusionCore::Map map = (FusionCore::Map)luaL_checknumber(L, 4);
     FusionCore::ObjectOwnerModes ownerMode = (FusionCore::ObjectOwnerModes)luaL_checknumber(L, 5);
 
-    dmLogInfo("SpawnObject props");
-    dmHashTable<dmhash_t, dmArray<dmhash_t>*> script_properties;
-    script_properties.SetCapacity(11, 32);
-    CheckScriptProperties(L, 6, &script_properties);
-
-    r = DoCreateObject(id, &factory_url, map, ownerMode, &script_properties);
+    ScriptProperties* script_properties = CheckScriptProperties(L, 6);
+    r = DoCreateObject(id, &factory_url, map, ownerMode, script_properties);
+    FreeScriptProperties(script_properties);
     if (dmGameObject::RESULT_OK != r)
     {
         luaL_error(L, "Unable to spawn game object");
@@ -2293,13 +2191,9 @@ static int CreateObject(lua_State* L)
     FusionCore::ObjectOwnerModes ownerMode = (FusionCore::ObjectOwnerModes)luaL_checknumber(L, 3);
     dmhash_t id = ResolveId(L, 4);
 
-    dmLogInfo("CreateObject props");
-    dmHashTable<dmhash_t, dmArray<dmhash_t>*> properties;
-    properties.SetCapacity(11, 32);
-    CheckScriptProperties(L, 5, &properties);
-
-    dmLogInfo("CreateObject %d", ownerMode);
-    dmGameObject::Result r = DoCreateObject(id, factory_url, map, ownerMode, &properties);
+    ScriptProperties* script_properties = CheckScriptProperties(L, 5);
+    dmGameObject::Result r = DoCreateObject(id, factory_url, map, ownerMode, script_properties);
+    FreeScriptProperties(script_properties);
     if (dmGameObject::RESULT_OK != r)
     {
         luaL_error(L, "Unable to create object");
@@ -2358,8 +2252,9 @@ static int MapChange(lua_State* L)
     return 0;
 }
 
-/** Send RPC
- * @name rpc
+/** Send an RPC event. Events can be sent to a specific player or all players, and
+ * to a specific object or to all subscribers.
+ * @name send_rpc
  * @number target_player 0 = all, specific PlayerId = targeted
  * @hash target_object Id of game object, nil for broadcast
  * @hash event
@@ -2411,6 +2306,89 @@ static int SendRpc(lua_State* L)
     bool ok = g_Ctx->m_FusionClient->SendUserRpc(rpc);
     lua_pushboolean(L, ok);
     return 1;
+}
+
+/** Subscribe to RPC broadcat event. The events will be delivered as messages.
+ * @name subscribe_rpc
+ * @hash rpc_event Event to subscribe to
+ * @hash? id Subscriber id
+ */
+static int SubscribeRpc(lua_State* L)
+{
+    dmLogInfo("SubscribeRpc");
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    dmhash_t event_id = dmScript::CheckHashOrString(L, 1);
+    dmhash_t id = ResolveId(L, 2);
+
+    dmArray<dmhash_t>* subscribers;
+    dmArray<dmhash_t>** subscribersptr = g_Ctx->m_RpcSubscribers.Get(event_id);
+    if (subscribersptr == 0x0)
+    {
+        if (g_Ctx->m_RpcSubscribers.Full())
+        {
+            g_Ctx->m_RpcSubscribers.OffsetCapacity(10);
+        }
+        subscribers = new dmArray<dmhash_t>();
+        g_Ctx->m_RpcSubscribers.Put(event_id, subscribers);
+    }
+    else
+    {
+        subscribers = *subscribersptr;
+    }
+
+    if (subscribers->Full())
+    {
+        subscribers->OffsetCapacity(10);
+    }
+
+    subscribers->Push(id);
+
+    return 0;
+}
+
+/** Unsubscribe from a subscribed RPC event
+ * @name unsubscribe_rpc
+ * @hash rpc_event Event to unsubscribe to
+ * @hash? id Which object should unsubscribe
+ */
+static int UnsubscribeRpc(lua_State* L)
+{
+    dmLogInfo("UnsubscribeRpc");
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    dmhash_t event_id = dmScript::CheckHashOrString(L, 1);
+    dmhash_t id = ResolveId(L, 2);
+
+    dmArray<dmhash_t>** subscribers = g_Ctx->m_RpcSubscribers.Get(event_id);
+    if (subscribers)
+    {
+        const int count = (*subscribers)->Size();
+        for (int i = 0; i < count; i++)
+        {
+            dmhash_t subscriber_id = (**subscribers)[i];
+            if (id == subscriber_id)
+            {
+                (*subscribers)->EraseSwap(i);
+                return 0;
+            }
+        }
+    }
+
+    dmLogWarning("Object '%s' is not subscribed to RPC event '%s'", dmHashReverseSafe64(id), dmHashReverseSafe64(event_id));
+    return 0;
 }
 
 /** Set event listener
@@ -2995,7 +2973,9 @@ static const luaL_reg Module_methods[] = {
     { "map_change", MapChange },
 
     // rpc and events
-    { "rpc", SendRpc },
+    { "send_rpc", SendRpc },
+    { "subscribe_rpc", SubscribeRpc },
+    { "unsubscribe_rpc", UnsubscribeRpc },
     { "on_event", OnEvent },
 
     // connection state
@@ -3320,6 +3300,7 @@ dmExtension::Result InitializeFusion(dmExtension::Params* params)
     g_Ctx->m_Timestamp = dmTime::GetMonotonicTime();
     g_Ctx->m_ResourceFactory = params->m_ResourceFactory;
     g_Ctx->m_ConfigFile = params->m_ConfigFile;
+    g_Ctx->m_LuaState = params->m_L;
     LuaInit(params->m_L);
     dmLogInfo("Registered %s Extension", MODULE_NAME);
     return dmExtension::RESULT_OK;
@@ -3341,11 +3322,26 @@ dmExtension::Result FinalizeFusion(dmExtension::Params* params)
         g_Ctx->m_FusionClient = 0;
     }
 
-    dmHashTable<dmhash_t, FusionObject*>::Iterator iter = g_Ctx->m_FusionObjects.GetIterator();
-    while(iter.Next())
+    // free fusion object wrappers
     {
-        FusionObject* object = iter.GetValue();
-        free(object);
+        dmHashTable<dmhash_t, FusionObject*>::Iterator iter = g_Ctx->m_FusionObjects.GetIterator();
+        while(iter.Next())
+        {
+            FusionObject* object = iter.GetValue();
+            free(object);
+        }
+        g_Ctx->m_FusionObjects.Clear();
+    }
+
+    // free rpc subscribers
+    {
+        dmHashTable<dmhash_t, dmArray<dmhash_t>*>::Iterator iter = g_Ctx->m_RpcSubscribers.GetIterator();
+        while(iter.Next())
+        {
+            dmArray<dmhash_t>* arr = iter.GetValue();
+            free(arr);
+        }
+        g_Ctx->m_RpcSubscribers.Clear();
     }
 
     if (g_FusionEventCallback)

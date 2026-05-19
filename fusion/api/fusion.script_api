@@ -178,10 +178,13 @@
     parameters:
     - name: map
       type: number
-    - name: factory_url
-      type: string
     - name: owner_mode
       type: number
+    - name: properties
+      type: table
+      desc: |
+        Which script properties to sync
+        
     - name: id
       type: string
       optional: True
@@ -206,16 +209,18 @@
         Initial rotation of created game object
         
       optional: True
-    - name: scene
+    - name: map
       type: number
       desc: |
-        The scene to which this object belongs
+        The map to which this object belongs
         
     - name: owner_mode
       type: number
       desc: |
         Owner mode of spawned object
         
+    - name: script_properties
+      type: table
     returns:
     - name: Id
       type: hash
@@ -237,12 +242,14 @@
     desc: |
       Create an object.
     parameters:
-    - name: scene
+    - name: map
       type: number
     - name: factory_url
       type: string
     - name: owner_mode
       type: number
+    - name: script_properties
+      type: table
     - name: id
       type: string
       optional: True
@@ -268,10 +275,11 @@
     - name: data
       type: string
 
-  - name: rpc
+  - name: send_rpc
     type: function
     desc: |
-      Send RPC.
+      Send an RPC event. Events can be sent to a specific player or all players, and.
+      To a specific object or to all subscribers.
     parameters:
     - name: target_player
       type: number
@@ -279,10 +287,20 @@
         0 = all, specific PlayerId = targeted
         
     - name: data
-      type: string
+      type: table
     returns:
     - name: ok
       type: boolean
+
+  - name: subscribe_rpc
+    type: function
+    desc: |
+      Subscribe to RPC broadcat event. The events will be delivered as messages.
+
+  - name: unsubscribe_rpc
+    type: function
+    desc: |
+      Unsubscribe from a subscribed RPC event.
 
   - name: on_event
     type: function
@@ -451,6 +469,17 @@
       type: number
       desc: |
         Round trip time in seconds
+        
+
+  - name: get_network_time
+    type: function
+    desc: |
+      Get the network time
+    returns:
+    - name: time
+      type: number
+      desc: |
+        Network time
         
 
   - name: network_time_diff
@@ -644,6 +673,21 @@
     type: number
     desc: |
       DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT
+
+  - name: MASTER_CLIENT_PLAYER_ID
+    type: number
+    desc: |
+      MASTER_CLIENT_PLAYER_ID
+
+  - name: PLUGIN_PLAYER_ID
+    type: number
+    desc: |
+      PLUGIN_PLAYER_ID
+
+  - name: OBJECT_OWNER_PLAYER_ID
+    type: number
+    desc: |
+      OBJECT_OWNER_PLAYER_ID
 
   - name: EVENT_OBJECT_READY
     type: number

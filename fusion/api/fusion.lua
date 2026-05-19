@@ -3,7 +3,7 @@
 ---@diagnostic disable: missing-return
 --[[
 Functions and constants for interacting with Photon Fusion
-GENERATED FILE
+This is a generated file. Do not modify. Created using https://github.com/britzl/generatedocs
 --]]
 
 ---@class defold_api.fusion
@@ -36,17 +36,22 @@ GENERATED FILE
 ---@field DISCONNECT_CAUSE_DASHBOARDVERSIONINVALID number
 ---@field DISCONNECT_CAUSE_AUTHENTICATIONTICKETEXPIRED number
 ---@field DISCONNECT_CAUSE_DISCONNECTBYOPERATIONLIMIT number
+---@field MASTER_CLIENT_PLAYER_ID number
+---@field PLUGIN_PLAYER_ID number
+---@field OBJECT_OWNER_PLAYER_ID number
 ---@field EVENT_OBJECT_READY number
 ---@field EVENT_SUB_OBJECT_CREATED number
 ---@field EVENT_OBJECT_DESTROYED number
 ---@field EVENT_SUB_OBJECT_DESTROYED number
+---@field EVENT_OBJECT_FORCE_ALIVE number
+---@field EVENT_SUB_OBJECT_FORCE_ALIVE number
 ---@field EVENT_OBJECT_OWNER_CHANGED number
----@field EVENT_OBJECT_PREDICTION_OVERRIDE number
+---@field EVENT_PREDICTION_OVERRIDE number
 ---@field EVENT_LOBBY_STATS number
 ---@field EVENT_ROOM_JOINED number
 ---@field EVENT_ROOM_LEFT number
 ---@field EVENT_RPC number
----@field EVENT_SCENE_CHANGE number
+---@field EVENT_MAP_CHANGE number
 ---@field EVENT_DESTROYED_MAP_ACTOR number
 ---@field EVENT_INTEREST_ENTER number
 ---@field EVENT_INTEREST_EXIT number
@@ -54,15 +59,13 @@ GENERATED FILE
 ---@field EVENT_FUSION_START number
 ---@field EVENT_CONNECTED number
 ---@field EVENT_DISCONNECTED number
-
 fusion = {}
 ---@param app_id string
 ---@param app_version string
 function fusion.init(app_id,app_version) end
 function fusion.init_from_settings() end
 ---@param user string?
----@param region string?
-function fusion.connect(user,region) end
+function fusion.connect(user) end
 function fusion.disconnect() end
 function fusion.reconnect() end
 function fusion.start() end
@@ -99,35 +102,39 @@ function fusion.is_started() end
 function fusion.is_in_room() end
 ---@param enable boolean
 function fusion.enable_debug(enable) end
----@param scene number
----@param factory_url string
+---@param map number
 ---@param owner_mode number
+---@param properties table
 ---@param id string?
-function fusion.register_scene_object(scene,factory_url,owner_mode,id) end
+function fusion.create_map_object(map,owner_mode,properties,id) end
 ---@param factory_url string
 ---@param position vector3?
 ---@param rotation quat?
----@param scene number
+---@param map number
 ---@param owner_mode number
+---@param script_properties table
 ---@return hash Id
-function fusion.spawn(factory_url,position,rotation,scene,owner_mode) end
+function fusion.spawn(factory_url,position,rotation,map,owner_mode,script_properties) end
 ---@param id string?
 function fusion.despawn(id) end
----@param scene number
+---@param map number
 ---@param factory_url string
 ---@param owner_mode number
+---@param script_properties table
 ---@param id string?
-function fusion.register_object(scene,factory_url,owner_mode,id) end
+function fusion.create_object(map,factory_url,owner_mode,script_properties,id) end
 ---@param id string?
-function fusion.unregister_object(id) end
+function fusion.destroy_object(id) end
 ---@param index number
 ---@param sequence number
 ---@param data string
-function fusion.change_scene(index,sequence,data) end
+function fusion.map_change(index,sequence,data) end
 ---@param target_player number
----@param data string
+---@param data table
 ---@return boolean ok
-function fusion.rpc(target_player,data) end
+function fusion.send_rpc(target_player,data) end
+function fusion.subscribe_rpc() end
+function fusion.unsubscribe_rpc() end
 ---@param listener function
 function fusion.on_event(listener) end
 ---@return number The
@@ -148,18 +155,20 @@ function fusion.want_authority(claim_ownership,id) end
 function fusion.clear_owner_cooldown(id) end
 ---@param send_rate number
 ---@param id string?
-function fusion.set_send_rate(send_rate,id) end
+function fusion.set_room_send_rate(send_rate,id) end
 ---@param send_rate number
 ---@param id string?
 function fusion.set_local_send_rate(send_rate,id) end
 ---@param id string?
-function fusion.reset_send_rate(id) end
+function fusion.reset_room_send_rate(id) end
 ---@return number count
 function fusion.player_count() end
 ---@return boolean master
 function fusion.is_master_client() end
 ---@return number rtt
 function fusion.get_rtt() end
+---@return number time
+function fusion.get_network_time() end
 ---@return number diff
 function fusion.network_time_diff() end
 function fusion.set_global_interest_key() end

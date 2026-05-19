@@ -6,6 +6,9 @@
 #include "fusion_helpers.h"
 #include "StringType.h"
 #include "PropertyValue.h"
+#include "CreateRoomOptions.h"
+#include "MatchmakingOptions.h"
+#include "JoinRoomOptions.h"
 
 PhotonCommon::CharType* ToCharType(const char* text)
 {
@@ -58,6 +61,131 @@ void LuaTableToPropertyMap(lua_State* L, int index, PhotonMatchmaking::PropertyM
             lua_pop(L, 1); // pop value
         }
     }
+}
+
+PhotonMatchmaking::CreateRoomOptions CheckCreateRoomOptions(lua_State* L, int index)
+{
+    dmLogInfo("CheckCreateRoomOptions");
+    PhotonMatchmaking::CreateRoomOptions options = PhotonMatchmaking::CreateRoomOptions();
+    if (lua_type(L, index) == LUA_TTABLE)
+    {
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0)
+        {
+            const char* key = luaL_checkstring(L, -2);
+            if (strcmp("is_visible", key) == 0)
+            {
+                options.isVisible = lua_toboolean(L, -1);
+            }
+            else if (strcmp("is_open", key) == 0)
+            {
+                options.isOpen = lua_toboolean(L, -1);
+            }
+            else if (strcmp("max_players", key) == 0)
+            {
+                options.maxPlayers = lua_tonumber(L, -1);
+            }
+            else if (strcmp("player_ttl_ms", key) == 0)
+            {
+                options.playerTtlMs = lua_tonumber(L, -1);
+            }
+            else if (strcmp("empty_room_ttl_ms", key) == 0)
+            {
+                options.emptyRoomTtlMs = lua_tonumber(L, -1);
+            }
+            else if (strcmp("lobby_name", key) == 0)
+            {
+                const char* lobby_name = lua_tostring(L, -1);
+                options.lobbyName = ToStringType(lobby_name);
+            }
+            else if (strcmp("expected_users", key) == 0)
+            {
+                LuaTableToStdStringVector(L, lua_gettop(L), options.expectedUsers);
+            }
+            else if (strcmp("plugins", key) == 0)
+            {
+                LuaTableToStdStringVector(L, lua_gettop(L), options.plugins);
+            }
+            else if (strcmp("lobby_properties", key) == 0)
+            {
+                LuaTableToStdStringVector(L, lua_gettop(L), options.lobbyProperties);
+            }
+            else if (strcmp("custom_properties", key) == 0)
+            {
+                LuaTableToPropertyMap(L, lua_gettop(L), options.customProperties);
+            }
+            else
+            {
+                dmLogInfo("Unknown room option %s", key);
+            }
+            lua_pop(L, 1); // pop value
+        }
+    }
+    return options;
+}
+
+PhotonMatchmaking::MatchmakingOptions CheckMatchmakingOptions(lua_State* L, int index)
+{
+    dmLogInfo("CheckMatchmakingOptions");
+    PhotonMatchmaking::MatchmakingOptions options = PhotonMatchmaking::MatchmakingOptions();
+    if (lua_type(L, index) == LUA_TTABLE)
+    {
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0)
+        {
+            const char* key = luaL_checkstring(L, -2);
+            if (strcmp("max_players", key) == 0)
+            {
+                options.maxPlayers = lua_tonumber(L, -1);
+            }
+            else if (strcmp("lobby_name", key) == 0)
+            {
+                options.lobbyName = ToStringType(lua_tostring(L, -1));
+            }
+            else if (strcmp("expected_users", key) == 0)
+            {
+                LuaTableToStdStringVector(L, lua_gettop(L), options.expectedUsers);
+            }
+            else
+            {
+                dmLogInfo("Unknown matchmaking option %s", key);
+            }
+            lua_pop(L, 1); // pop value
+        }
+    }
+    return options;
+}
+
+PhotonMatchmaking::JoinRoomOptions CheckJoinRoomOptions(lua_State* L, int index)
+{
+    dmLogInfo("CheckJoinRoomOptions");
+    PhotonMatchmaking::JoinRoomOptions options = PhotonMatchmaking::JoinRoomOptions();
+    if (lua_type(L, index) == LUA_TTABLE)
+    {
+        lua_pushnil(L);
+        while (lua_next(L, index) != 0)
+        {
+            const char* key = luaL_checkstring(L, -2);
+            if (strcmp("rejoin", key) == 0)
+            {
+                options.rejoin = lua_toboolean(L, -1);
+            }
+            else if (strcmp("cache_slice_index", key) == 0)
+            {
+                options.cacheSliceIndex = lua_tonumber(L, -1);
+            }
+            else if (strcmp("expected_users", key) == 0)
+            {
+                LuaTableToStdStringVector(L, -1, options.expectedUsers);
+            }
+            else
+            {
+                dmLogInfo("Unknown matchmaking option %s", key);
+            }
+            lua_pop(L, 1); // pop value
+        }
+    }
+    return options;
 }
 
 void PrintStack(lua_State *L)
@@ -121,5 +249,22 @@ dmVMath::Point3 LerpPoint(float t, dmVMath::Point3 a, dmVMath::Point3 b)
         a.getY() + (b.getY() - a.getY()) * t,
         a.getZ() + (b.getZ() - a.getZ()) * t);
 }
+
+int LuaToJson(lua_State* L, int index, char** json, size_t* json_len)
+{
+    lua_pushvalue(L, index);
+    lua_insert(L, 1);
+    int result = dmScript::LuaToJson(L, json, json_len);
+    lua_remove(L, 1);
+    return result;
+}
+
+int LuaAbsIndex(lua_State *L, int index) {
+    if (index > 0 || index <= LUA_REGISTRYINDEX) {
+        return index;
+    }
+    return lua_gettop(L) + index + 1;
+}
+
 
 #endif
