@@ -466,6 +466,55 @@ static FusionObject* CreateFusionObject(dmhash_t id, FusionCore::ObjectRoot* obj
     return fusion_object;
 }
 
+static bool IsPropertyVector3(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+{
+    dmVMath::Vector3 out;
+    return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsVector3(instance, component_id, property_id, &out));
+}
+static bool IsPropertyVector4(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+{
+    dmVMath::Vector4 out;
+    return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsVector4(instance, component_id, property_id, &out));
+}
+static bool IsPropertyQuat(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+{
+    dmVMath::Quat out;
+    return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsQuat(instance, component_id, property_id, &out));
+}
+static bool IsPropertyFloat(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+{
+    float out;
+    return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsFloat(instance, component_id, property_id, &out));
+}
+static bool IsPropertyBool(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+{
+    bool out;
+    return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsBool(instance, component_id, property_id, &out));
+}
+static bool IsPropertyHash(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+{
+    dmhash_t out;
+    return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsHash(instance, component_id, property_id, &out));
+}
+
+static bool IsPropertySynced(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id, ScriptProperties* properties)
+{
+    dmArray<dmhash_t>** props = properties->Get(component_id);
+    if (props != 0x0)
+    {
+        int prop_count = (*props)->Size();
+        for (int i = 0; i < prop_count; i++)
+        {
+            dmhash_t synced_property_id = (**props)[i];
+            if (property_id == synced_property_id)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 
 static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionObjectOptions* options, uint8_t* header, size_t &header_length, size_t &words_count)
 {
@@ -527,13 +576,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                         // todo: this is not pretty - we are trying every property type one
                         // after another since we have no type inspection in dmSDK
                         dmhash_t property_id = (**props)[i];
-                        bool outbool;
-                        dmhash_t outhash;
-                        float outfloat;
-                        dmVMath::Quat outquat;
-                        dmVMath::Vector3 outv3;
-                        dmVMath::Vector4 outv4;
-                        if (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsVector3(instance, component_id, property_id, &outv3))
+                        if (IsPropertyVector3(instance, component_id, property_id))
                         {
                             dmLogInfo("  Script property %s VECTOR3", dmHashReverseSafe64(property_id));
                             words_count += 3;
@@ -541,7 +584,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                             header_length += PushHash(header + header_length, property_id);
                             header_length += PushUint8(header + header_length, ScriptPropertyType::VECTOR3);
                         }
-                        else if (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsVector4(instance, component_id, property_id, &outv4))
+                        else if (IsPropertyVector4(instance, component_id, property_id))
                         {
                             dmLogInfo("  Script property %s VECTOR4", dmHashReverseSafe64(property_id));
                             words_count += 4;
@@ -549,7 +592,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                             header_length += PushHash(header + header_length, property_id);
                             header_length += PushUint8(header + header_length, ScriptPropertyType::VECTOR4);
                         }
-                        else if (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsQuat(instance, component_id, property_id, &outquat))
+                        else if (IsPropertyQuat(instance, component_id, property_id))
                         {
                             dmLogInfo("  Script property %s QUAT", dmHashReverseSafe64(property_id));
                             words_count += 4;
@@ -557,7 +600,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                             header_length += PushHash(header + header_length, property_id);
                             header_length += PushUint8(header + header_length, ScriptPropertyType::QUAT);
                         }
-                        else if (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsFloat(instance, component_id, property_id, &outfloat))
+                        else if (IsPropertyFloat(instance, component_id, property_id))
                         {
                             dmLogInfo("  Script property %s FLOAT", dmHashReverseSafe64(property_id));
                             words_count += 1;
@@ -565,7 +608,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                             header_length += PushHash(header + header_length, property_id);
                             header_length += PushUint8(header + header_length, ScriptPropertyType::FLOAT);
                         }
-                        else if (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsBool(instance, component_id, property_id, &outbool))
+                        else if (IsPropertyBool(instance, component_id, property_id))
                         {
                             dmLogInfo("  Script property %s BOOL", dmHashReverseSafe64(property_id));
                             words_count += 1;
@@ -573,7 +616,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                             header_length += PushHash(header + header_length, property_id);
                             header_length += PushUint8(header + header_length, ScriptPropertyType::BOOLEAN);
                         }
-                        else if (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsHash(instance, component_id, property_id, &outhash))
+                        else if (IsPropertyHash(instance, component_id, property_id))
                         {
                             dmLogInfo("  Script property %s HASH", dmHashReverseSafe64(property_id));
                             words_count += 2;
@@ -1066,7 +1109,7 @@ static void Fusion_OnSubObjectCreated(FusionCore::ObjectChild* child)
 
 static void Fusion_OnObjectDestroyed(const FusionCore::ObjectRoot* object, const FusionCore::DestroyModes mode)
 {
-    dmLogInfo("Fusion_OnObjectDestroyed owner: %d local player: %d", object->GetOwner(), g_Ctx->m_FusionClient->LocalPlayerId());
+    dmLogInfo("Fusion_OnObjectDestroyed local player: %d", g_Ctx->m_FusionClient->LocalPlayerId());
 
     if (mode == FusionCore::DestroyModes::Local)
     {
@@ -1136,14 +1179,14 @@ static void Fusion_OnObjectOwnerAssigned(FusionCore::ObjectRoot* object)
         lua_newtable(L);
         dmScript::PushHash(L, fusion_object->m_Id);
         lua_setfield(L, -2, "id");
-        lua_pushinteger(L, object->GetOwner());
+        lua_pushinteger(L, g_Ctx->m_FusionClient->GetOwner(object));
         lua_setfield(L, -2, "owner");
         CallListener(L, 3, 0);
     }
 
     FusionMessages::OnObjectOwnerAssigned msg;
     msg.m_Id = fusion_object->m_Id;
-    msg.m_Owner = object->GetOwner();
+    msg.m_Owner = g_Ctx->m_FusionClient->GetOwner(object);
     dmGameObject::Result result = PostDDF(fusion_object->m_Id, &msg);
 }
 static void Fusion_OnObjectOwnerChanged(FusionCore::ObjectRoot* object)
@@ -1164,14 +1207,14 @@ static void Fusion_OnObjectOwnerChanged(FusionCore::ObjectRoot* object)
         lua_newtable(L);
         dmScript::PushHash(L, fusion_object->m_Id);
         lua_setfield(L, -2, "id");
-        lua_pushinteger(L, object->GetOwner());
+        lua_pushinteger(L, g_Ctx->m_FusionClient->GetOwner(object));
         lua_setfield(L, -2, "owner");
         CallListener(L, 3, 0);
     }
 
     FusionMessages::OnObjectOwnerChanged msg;
     msg.m_Id = fusion_object->m_Id;
-    msg.m_Owner = object->GetOwner();
+    msg.m_Owner = g_Ctx->m_FusionClient->GetOwner(object);
     dmGameObject::Result result = PostDDF(fusion_object->m_Id, &msg);
 }
 static void Fusion_OnPredictionOverride(FusionCore::ObjectRoot* object)
@@ -2349,6 +2392,7 @@ static int SendRpc(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 1);
 
+    dmhash_t event = dmScript::CheckHashOrString(L, 3);
     FusionCore::PlayerId target_player_id = (FusionCore::PlayerId)luaL_checknumber(L, 1);
     
     FusionCore::ObjectId target_object_id;
@@ -2357,9 +2401,15 @@ static int SendRpc(lua_State* L)
         dmhash_t target_id = dmScript::CheckHashOrString(L, 2);
         FusionCore::ObjectRoot* target_object = GetFusionObjectFromEngineId(target_id);
         target_object_id = target_object->Id;
+
+        // Workaround: SDK server doesn't resolve TARGET_OWNER for MasterClient-owned objects.
+        if ((FusionCore::ObjectOwnerPlayerId == target_player_id)
+         && (FusionCore::ObjectOwnerModes::MasterClient == target_object->GetOwnerMode()))
+        {
+            target_player_id = FusionCore::MasterClientPlayerId;
+        }
     }
 
-    dmhash_t event = dmScript::CheckHashOrString(L, 3);
 
     // serialize data
     const uint32_t MAX_DATA_SIZE = 2048;
