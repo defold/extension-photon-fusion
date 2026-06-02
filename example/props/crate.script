@@ -1,0 +1,6 @@
+function init(self)
+	local map = 1
+	local owner_mode = fusion.OWNERMODE_MASTERCLIENT
+	local properties = {}
+	fusion.create_map_object(map, owner_mode, properties)
+end

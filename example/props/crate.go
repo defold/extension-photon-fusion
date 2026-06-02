@@ -1,11 +1,6 @@
 components {
-  id: "fusion"
-  component: "/fusion/fusion.script"
-  properties {
-    id: "is_scene_object"
-    value: "true"
-    type: PROPERTY_TYPE_BOOLEAN
-  }
+  id: "crate"
+  component: "/example/props/crate.script"
 }
 embedded_components {
   id: "model"
