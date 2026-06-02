@@ -89,8 +89,8 @@ enum ScriptPropertyType
 
 enum FusionReplicationMode
 {
-    NONE,
     AUTO,
+    NONE
 };
 
 struct FusionObject
