@@ -2435,7 +2435,7 @@ static int SendRpc(lua_State* L)
     return 1;
 }
 
-/** Subscribe to RPC broadcat event. The events will be delivered as messages.
+/** Subscribe to RPC broadcast event. The events will be delivered as messages.
  * @name subscribe_rpc
  * @hash rpc_event Event to subscribe to
  * @hash? id Subscriber id
