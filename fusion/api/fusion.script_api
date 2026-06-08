@@ -286,6 +286,13 @@
       desc: |
         0 = all, specific PlayerId = targeted
         
+    - name: target_object
+      type: hash
+      desc: |
+        Id of game object, nil for broadcast
+        
+    - name: event
+      type: hash
     - name: data
       type: table
     returns:
@@ -296,11 +303,33 @@
     type: function
     desc: |
       Subscribe to RPC broadcat event. The events will be delivered as messages.
+    parameters:
+    - name: rpc_event
+      type: hash
+      desc: |
+        Event to subscribe to
+        
+    - name: id
+      type: hash?
+      desc: |
+        Subscriber id
+        
 
   - name: unsubscribe_rpc
     type: function
     desc: |
       Unsubscribe from a subscribed RPC event.
+    parameters:
+    - name: rpc_event
+      type: hash
+      desc: |
+        Event to unsubscribe to
+        
+    - name: id
+      type: hash?
+      desc: |
+        Which object should unsubscribe
+        
 
   - name: on_event
     type: function
@@ -497,16 +526,44 @@
     type: function
     desc: |
       Set global visibility key for an object
+    parameters:
+    - name: id
+      type: hash
+      desc: |
+        Object to set global visibility key for
+        
 
   - name: set_area_interest_key
     type: function
     desc: |
       Set area visibility key for an object
+    parameters:
+    - name: key
+      type: hash
+      desc: |
+        Area key
+        
+    - name: id
+      type: hash
+      desc: |
+        Object to set area visibility key for
+        
 
   - name: set_user_interest_key
     type: function
     desc: |
       Set user visibility key for an object
+    parameters:
+    - name: key
+      type: hash
+      desc: |
+        User key
+        
+    - name: id
+      type: hash
+      desc: |
+        Object to set user visibility key for
+        
 
   - name: set_area_keys
     type: function
@@ -523,11 +580,28 @@
     type: function
     desc: |
       Add a user visibility key
+    parameters:
+    - name: key
+      type: hash
+      desc: |
+        User key to add
+        
 
   - name: remove_user_key
     type: function
     desc: |
       Remove a user visibility key from an object
+    parameters:
+    - name: key
+      type: hash
+      desc: |
+        User key to remove
+        
+    - name: id
+      type: hash
+      desc: |
+        Object to remove user visibility key from
+        
 
   - name: OWNERMODE_TRANSACTION
     type: number
