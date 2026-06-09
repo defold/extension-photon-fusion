@@ -2290,8 +2290,8 @@ static int DespawnObject(lua_State* L)
 
 /** Create an object
  * @name create_object
- * @number map
  * @string factory_url
+ * @number map
  * @number owner_mode
  * @table options
  * @string [id]
@@ -2307,8 +2307,8 @@ static int CreateObject(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 0);
 
-    FusionCore::Map map = (FusionCore::Map)luaL_checknumber(L, 1);
-    dmMessage::URL* factory_url = dmScript::CheckURL(L, 2);
+    dmMessage::URL* factory_url = dmScript::CheckURL(L, 1);
+    FusionCore::Map map = (FusionCore::Map)luaL_checknumber(L, 2);
     FusionCore::ObjectOwnerModes ownerMode = (FusionCore::ObjectOwnerModes)luaL_checknumber(L, 3);
     dmhash_t id = ResolveId(L, 5);
 
