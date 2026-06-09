@@ -79,12 +79,12 @@ enum FusionConnectionState
 
 enum ScriptPropertyType
 {
-    VECTOR3,
-    VECTOR4,
-    QUAT,
-    FLOAT,
-    BOOLEAN,
-    HASH,
+    PROP_VECTOR3,
+    PROP_VECTOR4,
+    PROP_QUAT,
+    PROP_FLOAT,
+    PROP_BOOLEAN,
+    PROP_HASH,
 };
 
 enum FusionReplicationMode
@@ -582,7 +582,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                             words_count += 3;
                             actual_prop_count++;
                             header_length += PushHash(header + header_length, property_id);
-                            header_length += PushUint8(header + header_length, ScriptPropertyType::VECTOR3);
+                            header_length += PushUint8(header + header_length, ScriptPropertyType::PROP_VECTOR3);
                         }
                         else if (IsPropertyVector4(instance, component_id, property_id))
                         {
@@ -590,7 +590,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                             words_count += 4;
                             actual_prop_count++;
                             header_length += PushHash(header + header_length, property_id);
-                            header_length += PushUint8(header + header_length, ScriptPropertyType::VECTOR4);
+                            header_length += PushUint8(header + header_length, ScriptPropertyType::PROP_VECTOR4);
                         }
                         else if (IsPropertyQuat(instance, component_id, property_id))
                         {
@@ -598,7 +598,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                             words_count += 4;
                             actual_prop_count++;
                             header_length += PushHash(header + header_length, property_id);
-                            header_length += PushUint8(header + header_length, ScriptPropertyType::QUAT);
+                            header_length += PushUint8(header + header_length, ScriptPropertyType::PROP_QUAT);
                         }
                         else if (IsPropertyFloat(instance, component_id, property_id))
                         {
@@ -606,7 +606,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                             words_count += 1;
                             actual_prop_count++;
                             header_length += PushHash(header + header_length, property_id);
-                            header_length += PushUint8(header + header_length, ScriptPropertyType::FLOAT);
+                            header_length += PushUint8(header + header_length, ScriptPropertyType::PROP_FLOAT);
                         }
                         else if (IsPropertyBool(instance, component_id, property_id))
                         {
@@ -614,7 +614,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                             words_count += 1;
                             actual_prop_count++;
                             header_length += PushHash(header + header_length, property_id);
-                            header_length += PushUint8(header + header_length, ScriptPropertyType::BOOLEAN);
+                            header_length += PushUint8(header + header_length, ScriptPropertyType::PROP_BOOLEAN);
                         }
                         else if (IsPropertyHash(instance, component_id, property_id))
                         {
@@ -622,7 +622,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
                             words_count += 2;
                             actual_prop_count++;
                             header_length += PushHash(header + header_length, property_id);
-                            header_length += PushUint8(header + header_length, ScriptPropertyType::HASH);
+                            header_length += PushUint8(header + header_length, ScriptPropertyType::PROP_HASH);
                         }
                         else
                         {
@@ -754,37 +754,37 @@ static void SerializeFusionObject(FusionObject* fusion_object)
                 uint8_t property_type;
                 header_offset += PopHash(header + header_offset, &property_id);
                 header_offset += PopUint8(header + header_offset, &property_type);
-                if (ScriptPropertyType::VECTOR3 == property_type)
+                if (ScriptPropertyType::PROP_VECTOR3 == property_type)
                 {
                     dmVMath::Vector3 prop;
                     dmGameObject::GetPropertyAsVector3(instance, component_id, property_id, &prop);
                     word_offset += PushVector3(words + word_offset, prop);
                 }
-                else if (ScriptPropertyType::VECTOR4 == property_type)
+                else if (ScriptPropertyType::PROP_VECTOR4 == property_type)
                 {
                     dmVMath::Vector4 prop;
                     dmGameObject::GetPropertyAsVector4(instance, component_id, property_id, &prop);
                     word_offset += PushVector4(words + word_offset, prop);
                 }
-                else if (ScriptPropertyType::QUAT == property_type)
+                else if (ScriptPropertyType::PROP_QUAT == property_type)
                 {
                     dmVMath::Quat prop;
                     dmGameObject::GetPropertyAsQuat(instance, component_id, property_id, &prop);
                     word_offset += PushQuat(words + word_offset, prop);
                 }
-                else if (ScriptPropertyType::FLOAT == property_type)
+                else if (ScriptPropertyType::PROP_FLOAT == property_type)
                 {
                     float prop;
                     dmGameObject::GetPropertyAsFloat(instance, component_id, property_id, &prop);
                     word_offset += PushFloat(words + word_offset, prop);
                 }
-                else if (ScriptPropertyType::BOOLEAN == property_type)
+                else if (ScriptPropertyType::PROP_BOOLEAN == property_type)
                 {
                     bool prop;
                     dmGameObject::GetPropertyAsBool(instance, component_id, property_id, &prop);
                     word_offset += PushBool(words + word_offset, prop);
                 }
-                else if (ScriptPropertyType::HASH == property_type)
+                else if (ScriptPropertyType::PROP_HASH == property_type)
                 {
                     dmhash_t prop;
                     dmGameObject::GetPropertyAsHash(instance, component_id, property_id, &prop);
@@ -927,37 +927,37 @@ static void DeserializeFusionObject(FusionObject* fusion_object)
                 uint8_t property_type;
                 header_offset += PopHash(header + header_offset, &property_id);
                 header_offset += PopUint8(header + header_offset, &property_type);
-                if (ScriptPropertyType::VECTOR3 == property_type)
+                if (ScriptPropertyType::PROP_VECTOR3 == property_type)
                 {
                     dmVMath::Vector3 prop;
                     word_offset += PopVector3(words + word_offset, &prop);
                     dmGameObject::SetPropertyFromVector3(instance, component_id, property_id, prop);
                 }
-                else if (ScriptPropertyType::VECTOR4 == property_type)
+                else if (ScriptPropertyType::PROP_VECTOR4 == property_type)
                 {
                     dmVMath::Vector4 prop;
                     word_offset += PopVector4(words + word_offset, &prop);
                     dmGameObject::SetPropertyFromVector4(instance, component_id, property_id, prop);
                 }
-                else if (ScriptPropertyType::QUAT == property_type)
+                else if (ScriptPropertyType::PROP_QUAT == property_type)
                 {
                     dmVMath::Quat prop;
                     word_offset += PopQuat(words + word_offset, &prop);
                     dmGameObject::SetPropertyFromQuat(instance, component_id, property_id, prop);
                 }
-                else if (ScriptPropertyType::FLOAT == property_type)
+                else if (ScriptPropertyType::PROP_FLOAT == property_type)
                 {
                     float prop;
                     word_offset += PopFloat(words + word_offset, &prop);
                     dmGameObject::SetPropertyFromFloat(instance, component_id, property_id, prop);
                 }
-                else if (ScriptPropertyType::BOOLEAN == property_type)
+                else if (ScriptPropertyType::PROP_BOOLEAN == property_type)
                 {
                     bool prop;
                     word_offset += PopBool(words + word_offset, &prop);
                     dmGameObject::SetPropertyFromBool(instance, component_id, property_id, prop);
                 }
-                else if (ScriptPropertyType::HASH == property_type)
+                else if (ScriptPropertyType::PROP_HASH == property_type)
                 {
                     dmhash_t prop;
                     word_offset += PopHash(words + word_offset, &prop);
