@@ -4,11 +4,13 @@
 
 #include "StringType.h"
 
-namespace PhotonMatchmaking {
-    struct FriendInfo {
-        PhotonCommon::StringType userId;
-        bool isOnline = false;
-        PhotonCommon::StringType roomName;
-        bool isInRoom = false;
-    };
+namespace PhotonMatchmaking
+{
+	struct FriendInfo
+	{
+		PhotonCommon::StringType userId;
+		bool                     isOnline = false;
+		PhotonCommon::StringType roomName;
+		bool                     isInRoom = false;
+	};
 } // namespace PhotonMatchmaking

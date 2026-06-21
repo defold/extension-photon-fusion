@@ -8,14 +8,18 @@
 
 #ifndef FUSIONCORE_NO_DEPRECATED_NAMESPACE
 
-namespace FusionCore::Notify {}
-
-namespace SharedMode {
-    using namespace FusionCore;
-
-    namespace Notify {
-        using namespace FusionCore::Notify;
-    }
+namespace FusionCore::Notify
+{
 }
+
+namespace SharedMode
+{
+	using namespace FusionCore;
+
+	namespace Notify
+	{
+		using namespace FusionCore::Notify;
+	}
+} // namespace SharedMode
 
 #endif

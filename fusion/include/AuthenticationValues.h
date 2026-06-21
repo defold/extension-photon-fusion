@@ -10,11 +10,13 @@
 #include <variant>
 #include <vector>
 
-namespace PhotonMatchmaking {
-    struct AuthenticationValues {
-        PhotonCommon::StringType userId;
-        CustomAuthenticationType type = CustomAuthenticationType::None;
-        PhotonCommon::StringType parameters;
-        std::variant<std::monostate, std::vector<uint8_t>, PhotonCommon::StringType, PropertyMap> data;
-    };
+namespace PhotonMatchmaking
+{
+	struct AuthenticationValues
+	{
+		PhotonCommon::StringType                                                                  userId;
+		CustomAuthenticationType                                                                  type = CustomAuthenticationType::None;
+		PhotonCommon::StringType                                                                  parameters;
+		std::variant<std::monostate, std::vector<uint8_t>, PhotonCommon::StringType, PropertyMap> data;
+	};
 } // namespace PhotonMatchmaking

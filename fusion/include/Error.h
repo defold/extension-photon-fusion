@@ -4,15 +4,18 @@
 
 #include "StringType.h"
 
-namespace PhotonCommon {
-    enum class ErrorCode : int {
-        Ok = 0,
-        Unknown = -1,
-    };
+namespace PhotonCommon
+{
+	enum class ErrorCode : int
+	{
+		Ok      = 0,
+		Unknown = -1,
+	};
 
-    template<typename CodeT = ErrorCode>
-    struct Error {
-        CodeT code = CodeT::Unknown;
-        StringType message;
-    };
+	template <typename CodeT = ErrorCode>
+	struct Error
+	{
+		CodeT      code = CodeT::Unknown;
+		StringType message;
+	};
 } // namespace PhotonCommon

@@ -154,6 +154,8 @@ dmhash_t g_FusionEventOnObjectForceAlive = dmHashString64("on_object_force_alive
 dmhash_t g_FusionEventOnSubObjectForceAlive = dmHashString64("on_sub_object_force_alive");
 dmhash_t g_FusionEventOnObjectOwnerAssigned = dmHashString64("on_object_owner_assigned");
 dmhash_t g_FusionEventOnObjectOwnerChanged = dmHashString64("on_object_owner_changed");
+dmhash_t g_FusionEventOnOwnershipRequest = dmHashString64("on_ownership_request");
+dmhash_t g_FusionEventOnOwnershipResponse = dmHashString64("on_ownership_response");
 dmhash_t g_FusionEventOnPredictionOverride = dmHashString64("on_prediction_override");
 dmhash_t g_FusionEventOnLobbyStats = dmHashString64("on_lobby_stats");
 dmhash_t g_FusionEventOnRoomJoined = dmHashString64("on_room_joined");
@@ -1075,6 +1077,22 @@ static int CallListener(dmhash_t event_id, const char* v)
     lua_pushstring(L, v);
     return CallListener(L, 3, 0);
 }
+static int CallListener(dmhash_t event_id, const char* vs, const int vi)
+{
+    lua_State* L = SetupListener();
+    if (!L)
+    {
+        return 0;
+    }
+    dmScript::PushHash(L, event_id);
+    lua_pushstring(L, vs);
+    lua_pushnumber(L, vi);
+    return CallListener(L, 3, 0);
+}
+static int CallListener(dmhash_t event_id, const PhotonCommon::StringType message)
+{
+    return CallListener(event_id, (const char*)message.c_str());
+}
 
 static void Fusion_OnObjectReady(FusionCore::ObjectRoot* object)
 {
@@ -1161,9 +1179,9 @@ static void Fusion_OnSubObjectForceAlive(FusionCore::ObjectChild* child)
     dmLogInfo("Fusion_OnSubObjectForceAlive - NOT IMPLEMENTED");
     CallListener(g_FusionEventOnSubObjectForceAlive);
 }
-static void Fusion_OnObjectOwnerAssigned(FusionCore::ObjectRoot* object)
+static void Fusion_OnOwnershipRequest(FusionCore::ObjectRoot* object, FusionCore::PlayerId player)
 {
-    dmLogInfo("Fusion_OnObjectOwnerAssigned local player: %d", g_Ctx->m_FusionClient->LocalPlayerId());
+    dmLogInfo("Fusion_OnOwnershipRequest local player: %d", g_Ctx->m_FusionClient->LocalPlayerId());
 
     FusionObject* fusion_object = GetFusionObjectFromObjectRoot(object);
     if (!fusion_object)
@@ -1175,18 +1193,46 @@ static void Fusion_OnObjectOwnerAssigned(FusionCore::ObjectRoot* object)
     lua_State* L = SetupListener();
     if(L)
     {
-        dmScript::PushHash(L, g_FusionEventOnObjectOwnerChanged);
+        dmScript::PushHash(L, g_FusionEventOnOwnershipRequest);
         lua_newtable(L);
         dmScript::PushHash(L, fusion_object->m_Id);
         lua_setfield(L, -2, "id");
-        lua_pushinteger(L, g_Ctx->m_FusionClient->GetOwner(object));
-        lua_setfield(L, -2, "owner");
+        lua_pushinteger(L, player);
+        lua_setfield(L, -2, "player");
         CallListener(L, 3, 0);
     }
 
-    FusionMessages::OnObjectOwnerAssigned msg;
+    FusionMessages::OnOwnershipRequest msg;
     msg.m_Id = fusion_object->m_Id;
-    msg.m_Owner = g_Ctx->m_FusionClient->GetOwner(object);
+    msg.m_Player = player;
+    dmGameObject::Result result = PostDDF(fusion_object->m_Id, &msg);
+}
+static void Fusion_OnOwnershipResponse(FusionCore::ObjectRoot* object, bool granted)
+{
+    dmLogInfo("Fusion_OnOwnershipResponse local player: %d", g_Ctx->m_FusionClient->LocalPlayerId());
+
+    FusionObject* fusion_object = GetFusionObjectFromObjectRoot(object);
+    if (!fusion_object)
+    {
+        dmLogError("Unable to find object");
+        return;
+    }
+
+    lua_State* L = SetupListener();
+    if(L)
+    {
+        dmScript::PushHash(L, g_FusionEventOnOwnershipRequest);
+        lua_newtable(L);
+        dmScript::PushHash(L, fusion_object->m_Id);
+        lua_setfield(L, -2, "id");
+        lua_pushboolean(L, granted);
+        lua_setfield(L, -2, "granted");
+        CallListener(L, 3, 0);
+    }
+
+    FusionMessages::OnOwnershipResponse msg;
+    msg.m_Id = fusion_object->m_Id;
+    msg.m_Granted = granted;
     dmGameObject::Result result = PostDDF(fusion_object->m_Id, &msg);
 }
 static void Fusion_OnObjectOwnerChanged(FusionCore::ObjectRoot* object)
@@ -1434,10 +1480,10 @@ void Fusion_OnInterestExit(FusionCore::ObjectRoot* object)
         CallListener(g_FusionEventOnInterestExit, id);
     }
 }
-void Fusion_OnForcedDisconnect(std::string message)
+void Fusion_OnForcedDisconnect(PhotonCommon::StringType message, FusionCore::ForcedDisconnectReason reason)
 {
     dmLogInfo("Fusion_OnForcedDisconnect");
-    CallListener(g_FusionEventOnForcedDisconnect, message.c_str());
+    CallListener(g_FusionEventOnForcedDisconnect, (const char*)message.c_str(), (int)reason);
 }
 void Fusion_OnFusionStart()
 {
@@ -1517,7 +1563,8 @@ static void DoInit(lua_State* L, const char* appId, const char* appVersion)
     g_Ctx->m_FusionClient->OnRpc.Subscribe(Fusion_OnRpc);
     g_Ctx->m_FusionClient->OnRpcError.Subscribe(Fusion_OnRpcError);
     g_Ctx->m_FusionClient->OnMapChange.Subscribe(Fusion_OnMapChange);
-    g_Ctx->m_FusionClient->OnObjectOwnerAssigned.Subscribe(Fusion_OnObjectOwnerAssigned);
+    g_Ctx->m_FusionClient->OnOwnershipRequest.Subscribe(Fusion_OnOwnershipRequest);
+    g_Ctx->m_FusionClient->OnOwnershipResponse.Subscribe(Fusion_OnOwnershipResponse);
     g_Ctx->m_FusionClient->OnObjectOwnerChanged.Subscribe(Fusion_OnObjectOwnerChanged);
     g_Ctx->m_FusionClient->OnPredictionOverride.Subscribe(Fusion_OnPredictionOverride);
     g_Ctx->m_FusionClient->OnDestroyedMapActor.Subscribe(Fusion_OnDestroyedMapActor);
@@ -2367,8 +2414,9 @@ static int MapChange(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 0);
 
-    const char* data = luaL_checkstring(L, 1);
-    g_Ctx->m_FusionClient->MapChange(ToCharType(data));
+    size_t data_length;
+    const char* data = luaL_checklstring(L, 1, &data_length);
+    g_Ctx->m_FusionClient->MapChange(ToCharType(data), data_length);
 
     return 0;
 }
@@ -2432,6 +2480,11 @@ static int SendRpc(lua_State* L)
 
     bool ok = g_Ctx->m_FusionClient->SendUserRpc(rpc);
     lua_pushboolean(L, ok);
+    // seems like a broadcast will not be sent to the local player
+    if (target_player_id == 0)
+    {
+        Fusion_OnRpc(rpc);
+    }
     return 1;
 }
 
@@ -2715,6 +2768,34 @@ static int ClearOwnerCooldown(lua_State* L)
     if (object)
     {
         g_Ctx->m_FusionClient->ClearOwnerCooldown(object);
+    }
+    return 0;
+}
+
+/**
+ * Respond to a received ownership request
+ * @name respond_to_ownership_request
+ * @string object Id of the object
+ * @number requester Requesting player id 
+ * @bool granted True if the request is granted
+ */
+static int RespondToOwnershipRequest(lua_State* L)
+{
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    dmhash_t id = ResolveId(L, 1);
+    FusionCore::PlayerId requester = lua_tonumber(L, 2);
+    bool granted = lua_toboolean(L, 3);
+    FusionCore::ObjectRoot* object = GetFusionObjectFromEngineId(id);
+    if (object)
+    {
+        g_Ctx->m_FusionClient->RespondToOwnershipRequest(object, requester, granted);
     }
     return 0;
 }
@@ -3118,6 +3199,7 @@ static const luaL_reg Module_methods[] = {
     { "has_authority", HasAuthority },
     { "want_authority", WantAuthority },
     { "clear_owner_cooldown", ClearOwnerCooldown },
+    { "respond_to_ownership_request", RespondToOwnershipRequest },
     { "set_local_send_rate", SetLocalSendRate },
     { "set_room_send_rate", SetRoomSendRate },
     { "reset_room_send_rate", ResetRoomSendRate },
@@ -3311,6 +3393,23 @@ static void LuaInit(lua_State* L)
      * @field REPLICATION_MODE_AUTO
      */
     SETCONSTANT_NUMBER(REPLICATION_MODE_AUTO, FusionReplicationMode::AUTO);
+
+    /**
+     * FORCED_DISCONNECT_REASON_GENERIC
+     * @field FORCED_DISCONNECT_REASON_GENERIC
+     */
+    SETCONSTANT_NUMBER(FORCED_DISCONNECT_REASON_GENERIC, FusionCore::ForcedDisconnectReason::Generic);
+    /**
+     * FORCED_DISCONNECT_REASON_PROTOCOLINCOMPATIBLE
+     * @field FORCED_DISCONNECT_REASON_PROTOCOLINCOMPATIBLE
+     */
+    SETCONSTANT_NUMBER(FORCED_DISCONNECT_REASON_PROTOCOLINCOMPATIBLE, FusionCore::ForcedDisconnectReason::ProtocolIncompatible);
+    /**
+     * FORCED_DISCONNECT_REASON_ROOMVERSIONMISMATCH
+     * @field FORCED_DISCONNECT_REASON_ROOMVERSIONMISMATCH
+     */
+    SETCONSTANT_NUMBER(FORCED_DISCONNECT_REASON_ROOMVERSIONMISMATCH, FusionCore::ForcedDisconnectReason::RoomVersionMismatch);
+
 
     #undef SETCONSTANT_NUMBER
 

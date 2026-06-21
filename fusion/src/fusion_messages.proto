@@ -12,8 +12,13 @@ message OnObjectOwnerChanged
     required uint64 id = 1;
     required uint32 owner = 2;
 }
-message OnObjectOwnerAssigned
+message OnOwnershipRequest
 {
     required uint64 id = 1;
-    required uint32 owner = 2;
+    required uint32 player = 2;
+}
+message OnOwnershipResponse
+{
+    required uint64 id = 1;
+    required bool granted = 2;
 }

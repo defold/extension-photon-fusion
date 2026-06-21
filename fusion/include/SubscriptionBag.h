@@ -5,15 +5,18 @@
 #include "ScopedSubscription.h"
 #include <vector>
 
-namespace PhotonCommon {
-    class SubscriptionBag {
-    public:
-        SubscriptionBag& operator+=(Subscription s);
+namespace PhotonCommon
+{
+	class SubscriptionBag
+	{
+	public:
+		SubscriptionBag& operator+=(Subscription s);
 
-        void        UnsubscribeAll();
-        std::size_t Count()   const;
-        bool        IsEmpty() const;
-    private:
-        std::vector<ScopedSubscription> bag;
-    };
+		void        UnsubscribeAll();
+		std::size_t Count() const;
+		bool        IsEmpty() const;
+
+	private:
+		std::vector<ScopedSubscription> bag;
+	};
 } // namespace PhotonCommon
