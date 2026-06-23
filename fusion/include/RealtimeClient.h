@@ -185,6 +185,7 @@ namespace PhotonMatchmaking
 	private:
 		friend class MutableRoomView;
 		ExitGames::LoadBalancing::MutableRoom* GetLiveMutableRoom() const;
+		uint64_t                               GetRoomEpoch() const;
 		struct Impl;
 		std::unique_ptr<Impl> impl;
 	};

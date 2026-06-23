@@ -84,6 +84,7 @@ namespace PhotonMatchmaking
 
 		ExitGames::LoadBalancing::MutableRoom* cachedRoom = nullptr;
 		RealtimeClient*                        client     = nullptr;
+		uint64_t                               epoch      = 0;
 	};
 
 	template <typename T>

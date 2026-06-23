@@ -217,8 +217,11 @@ namespace FusionCore
 		void SkipStringHeap(ReadBuffer& reader, bool stringHeapEntriesChanged, bool stringHeapDataChanged);
 		void SetInterestKey(Object* obj, uint64_t key);
 
-		int _localPlayerNumber{0};
-		int _masterClientPlayerNumber{0};
+		void FireMasterClientInterestEnter();
+
+		int  _localPlayerNumber{0};
+		int  _masterClientPlayerNumber{0};
+		bool _prevIsMasterClient{false};
 
 	public:
 		[[nodiscard]] EMAReport GetSendReport() const { return _sendStats.Report(); }
