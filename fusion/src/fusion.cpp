@@ -1764,6 +1764,7 @@ static int Stop(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 0);
     g_Ctx->m_FusionClient->Stop();
+    g_Ctx->m_IsStarted = false;
     return 0;
 }
 
