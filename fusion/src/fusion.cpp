@@ -435,7 +435,10 @@ static dmhash_t DeleteFusionObject(const FusionCore::ObjectRoot* object)
 static void DeleteGameObject(dmhash_t id)
 {
     dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
-    dmGameObject::Delete(g_Ctx->m_Collection, instance, true);
+    if (instance != 0x0)
+    {
+        dmGameObject::Delete(g_Ctx->m_Collection, instance, true);
+    }
 }
 
 static bool CreateGameObject(dmhash_t id, const FusionCore::ObjectRoot* object)
