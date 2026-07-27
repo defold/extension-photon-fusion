@@ -113,6 +113,13 @@ struct FusionObjectOptions
     }
 };
 
+struct DefoldLogEvent
+{
+    LogSeverity m_Severity;
+    char m_Domain[12];
+    char m_FormattedString[256];
+};
+
 struct FusionCtx
 {
     dmResource::HFactory                           m_ResourceFactory;
@@ -127,6 +134,7 @@ struct FusionCtx
     PhotonMatchmaking::ConnectionState             m_ConnectionState;
     bool                                           m_IsStarted;
     lua_State*                                     m_LuaState;
+    dmArray<DefoldLogEvent*>                       m_LogEvents;
 
     // Component type identifiers
     uint32_t                                       m_Scriptc;
@@ -169,6 +177,61 @@ dmhash_t g_FusionEventOnForcedDisconnect = dmHashString64("on_forced_disconnect"
 dmhash_t g_FusionEventOnFusionStart = dmHashString64("on_fusion_start");
 dmhash_t g_FusionEventOnConnected = dmHashString64("on_connected");
 dmhash_t g_FusionEventOnDisconnected = dmHashString64("on_disconnected");
+dmhash_t g_DefoldOnLogEvent = dmHashString64("on_log_event");
+
+
+
+static void DefoldLogListener(LogSeverity severity, const char* domain, const char* formatted_string)
+{
+    if ((severity == LogSeverity::LOG_SEVERITY_USER_DEBUG) || (severity == LogSeverity::LOG_SEVERITY_DEBUG))
+    {
+        return;
+    }
+
+    DefoldLogEvent* event = (DefoldLogEvent*)malloc(sizeof(DefoldLogEvent));
+    event->m_Severity = severity;
+    dmStrlCpy(event->m_Domain, domain, 12);
+    size_t len = dmStrlCpy(event->m_FormattedString, formatted_string, 256);
+    event->m_FormattedString[len - 1] = '\0';
+    if (g_Ctx->m_LogEvents.Full())
+    {
+        const int capacity = g_Ctx->m_LogEvents.Capacity();
+        const int size = g_Ctx->m_LogEvents.Size();
+        for (int i = 0; i < capacity - 1; i++)
+        {
+            g_Ctx->m_LogEvents[i] = g_Ctx->m_LogEvents[i + 1];
+        }
+        g_Ctx->m_LogEvents.SetSize(size - 1);
+    }
+    g_Ctx->m_LogEvents.Push(event);
+}
+
+static int PopLogEvent(lua_State* L)
+{
+    DM_LUA_STACK_CHECK(L, 3);
+
+    if (g_Ctx->m_LogEvents.Empty())
+    {
+        lua_pushnil(L);
+        lua_pushnil(L);
+        lua_pushnil(L);
+        return 3;
+    }
+
+    const int capacity = g_Ctx->m_LogEvents.Capacity();
+    const int size = g_Ctx->m_LogEvents.Size();
+    DefoldLogEvent* event = g_Ctx->m_LogEvents[0];
+    for (int i = 0; i < size - 1; i++)
+    {
+        g_Ctx->m_LogEvents[i] = g_Ctx->m_LogEvents[i + 1];
+    }
+    g_Ctx->m_LogEvents.SetSize(size - 1);
+    lua_pushstring(L, event->m_FormattedString);
+    lua_pushinteger(L, event->m_Severity);
+    lua_pushstring(L, event->m_Domain);
+    free(event);
+    return 3;
+}
 
 
 /******
@@ -3205,6 +3268,8 @@ static const luaL_reg Module_methods[] = {
     { "set_room_send_rate", SetRoomSendRate },
     { "reset_room_send_rate", ResetRoomSendRate },
 
+    // debug
+    { "pop_log_event", PopLogEvent },
     { 0, 0 }
 };
 
@@ -3519,6 +3584,11 @@ static void LuaInit(lua_State* L)
      * @field EVENT_DISCONNECTED
      */
     SETCONSTANT_HASH(EVENT_DISCONNECTED, g_FusionEventOnDisconnected)
+    /**
+     * EVENT_DEFOLD_LOG_EVENT
+     * @field EVENT_DEFOLD_LOG_EVENT
+     */
+    SETCONSTANT_HASH(EVENT_DEFOLD_LOG_EVENT, g_DefoldOnLogEvent)
     #undef SETCONSTANT_HASH
 
 
@@ -3536,11 +3606,15 @@ dmExtension::Result InitializeFusion(dmExtension::Params* params)
 {
     dmLogInfo("InitializeFusion");
     g_Ctx = new FusionCtx();
+    g_Ctx->m_LogEvents.SetCapacity(100);
     g_Ctx->m_Timestamp = dmTime::GetMonotonicTime();
     g_Ctx->m_ResourceFactory = params->m_ResourceFactory;
     g_Ctx->m_ConfigFile = params->m_ConfigFile;
     g_Ctx->m_LuaState = params->m_L;
     LuaInit(params->m_L);
+
+    dmLogRegisterListener(&DefoldLogListener);
+
     dmLogInfo("Registered %s Extension", MODULE_NAME);
     return dmExtension::RESULT_OK;
 }
@@ -3554,6 +3628,7 @@ dmExtension::Result AppFinalizeFusion(dmExtension::AppParams* params)
 dmExtension::Result FinalizeFusion(dmExtension::Params* params)
 {
     dmLogInfo("FinalizeFusion");
+    dmLogUnregisterListener(&DefoldLogListener);
     if (g_Ctx->m_FusionClient)
     {
         g_Ctx->m_FusionClient->Shutdown();
