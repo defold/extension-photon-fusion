@@ -13,6 +13,7 @@
 #endif
 
 #include <dmsdk/sdk.h>
+#include <dmsdk/dlib/mutex.h>
 #include <dmsdk/gamesys/components/comp_model.h>
 #include <dmsdk/gamesys/components/comp_factory.h>
 #include <dmsdk/gamesys/resources/res_model.h>
@@ -135,6 +136,7 @@ struct FusionCtx
     bool                                           m_IsStarted;
     lua_State*                                     m_LuaState;
     dmArray<DefoldLogEvent*>                       m_LogEvents;
+    dmMutex::HMutex                                m_LogEventsMutex;
 
     // Component type identifiers
     uint32_t                                       m_Scriptc;
@@ -189,19 +191,26 @@ static void DefoldLogListener(LogSeverity severity, const char* domain, const ch
     }
 
     DefoldLogEvent* event = (DefoldLogEvent*)malloc(sizeof(DefoldLogEvent));
+    if (!event)
+    {
+        return;
+    }
+
     event->m_Severity = severity;
-    dmStrlCpy(event->m_Domain, domain, 12);
-    size_t len = dmStrlCpy(event->m_FormattedString, formatted_string, 256);
-    event->m_FormattedString[len - 1] = '\0';
+    dmStrlCpy(event->m_Domain, domain, sizeof(event->m_Domain));
+    dmStrlCpy(event->m_FormattedString, formatted_string, sizeof(event->m_FormattedString));
+
+    DM_MUTEX_SCOPED_LOCK(g_Ctx->m_LogEventsMutex);
     if (g_Ctx->m_LogEvents.Full())
     {
-        const int capacity = g_Ctx->m_LogEvents.Capacity();
         const int size = g_Ctx->m_LogEvents.Size();
-        for (int i = 0; i < capacity - 1; i++)
+        DefoldLogEvent* discarded_event = g_Ctx->m_LogEvents[0];
+        for (int i = 0; i < size - 1; i++)
         {
             g_Ctx->m_LogEvents[i] = g_Ctx->m_LogEvents[i + 1];
         }
         g_Ctx->m_LogEvents.SetSize(size - 1);
+        free(discarded_event);
     }
     g_Ctx->m_LogEvents.Push(event);
 }
@@ -210,7 +219,22 @@ static int PopLogEvent(lua_State* L)
 {
     DM_LUA_STACK_CHECK(L, 3);
 
-    if (g_Ctx->m_LogEvents.Empty())
+    DefoldLogEvent* event = 0;
+    {
+        DM_MUTEX_SCOPED_LOCK(g_Ctx->m_LogEventsMutex);
+        if (!g_Ctx->m_LogEvents.Empty())
+        {
+            const int size = g_Ctx->m_LogEvents.Size();
+            event = g_Ctx->m_LogEvents[0];
+            for (int i = 0; i < size - 1; i++)
+            {
+                g_Ctx->m_LogEvents[i] = g_Ctx->m_LogEvents[i + 1];
+            }
+            g_Ctx->m_LogEvents.SetSize(size - 1);
+        }
+    }
+
+    if (!event)
     {
         lua_pushnil(L);
         lua_pushnil(L);
@@ -218,14 +242,6 @@ static int PopLogEvent(lua_State* L)
         return 3;
     }
 
-    const int capacity = g_Ctx->m_LogEvents.Capacity();
-    const int size = g_Ctx->m_LogEvents.Size();
-    DefoldLogEvent* event = g_Ctx->m_LogEvents[0];
-    for (int i = 0; i < size - 1; i++)
-    {
-        g_Ctx->m_LogEvents[i] = g_Ctx->m_LogEvents[i + 1];
-    }
-    g_Ctx->m_LogEvents.SetSize(size - 1);
     lua_pushstring(L, event->m_FormattedString);
     lua_pushinteger(L, event->m_Severity);
     lua_pushstring(L, event->m_Domain);
@@ -3679,6 +3695,7 @@ dmExtension::Result InitializeFusion(dmExtension::Params* params)
 {
     dmLogInfo("InitializeFusion");
     g_Ctx = new FusionCtx();
+    g_Ctx->m_LogEventsMutex = dmMutex::New();
     g_Ctx->m_LogEvents.SetCapacity(100);
     g_Ctx->m_Timestamp = dmTime::GetMonotonicTime();
     g_Ctx->m_ResourceFactory = params->m_ResourceFactory;
@@ -3702,6 +3719,18 @@ dmExtension::Result FinalizeFusion(dmExtension::Params* params)
 {
     dmLogInfo("FinalizeFusion");
     dmLogUnregisterListener(&DefoldLogListener);
+
+    {
+        DM_MUTEX_SCOPED_LOCK(g_Ctx->m_LogEventsMutex);
+        for (uint32_t i = 0; i < g_Ctx->m_LogEvents.Size(); ++i)
+        {
+            free(g_Ctx->m_LogEvents[i]);
+        }
+        g_Ctx->m_LogEvents.SetSize(0);
+    }
+    dmMutex::Delete(g_Ctx->m_LogEventsMutex);
+    g_Ctx->m_LogEventsMutex = 0;
+
     if (g_Ctx->m_FusionClient)
     {
         g_Ctx->m_FusionClient->Shutdown();
