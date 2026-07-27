@@ -1076,7 +1076,7 @@ static dmGameObject::Result DoCreateObject(dmhash_t id, dmMessage::URL* factory_
     }
 
     FusionCore::TypeRef type;
-    type.Hash = 0;
+    type.Hash = factory_url ? factory_url->m_Path : 0;
     type.WordCount = words_count + FusionCore::Object::ExtraTailWords;
 
     uint32_t engine_flags = 0;
