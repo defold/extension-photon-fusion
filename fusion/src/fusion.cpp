@@ -2464,11 +2464,34 @@ static int DestroyObject(lua_State* L)
     return 0;
 }
 
+/** Add map
+ * @name map_add
+ * @string data
+ * @treturn number Map id
+ */
+static int MapAdd(lua_State* L)
+{
+    dmLogInfo("MapAdd");
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 1);
+
+    size_t data_length;
+    const char* data = luaL_checklstring(L, 1, &data_length);
+    FusionCore::Map map = g_Ctx->m_FusionClient->MapAdd(ToCharType(data), data_length);
+
+    lua_pushnumber(L, map);
+    return 1;
+}
+
 /** Change map
  * @name map_change
- * @number index
- * @number sequence
  * @string data
+ * @treturn number Map id
  */
 static int MapChange(lua_State* L)
 {
@@ -2479,13 +2502,55 @@ static int MapChange(lua_State* L)
         return 0;
     }
 
-    DM_LUA_STACK_CHECK(L, 0);
+    DM_LUA_STACK_CHECK(L, 1);
 
     size_t data_length;
     const char* data = luaL_checklstring(L, 1, &data_length);
-    g_Ctx->m_FusionClient->MapChange(ToCharType(data), data_length);
+    FusionCore::Map map = g_Ctx->m_FusionClient->MapChange(ToCharType(data), data_length);
+    lua_pushnumber(L, map);
+    return 1;
+}
 
+/** Remove map
+ * @name map_remove
+ * @number Map id
+ */
+static int MapRemove(lua_State* L)
+{
+    dmLogInfo("MapRemove");
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 0);
+
+    FusionCore::Map map = (FusionCore::Map)luaL_checknumber(L, 1);
+    g_Ctx->m_FusionClient->MapRemove(map);
     return 0;
+}
+
+/** Checkl if map is valid
+ * @name map_is_valid
+ * @number Map id
+ * @treturn boolean True if valid
+ */
+static int MapIsValid(lua_State* L)
+{
+    dmLogInfo("MapIsValid");
+    if (!g_Ctx->m_FusionClient)
+    {
+        luaL_error(L, "No Fusion client");
+        return 0;
+    }
+
+    DM_LUA_STACK_CHECK(L, 1);
+
+    FusionCore::Map map = (FusionCore::Map)luaL_checknumber(L, 1);
+    bool valid = g_Ctx->m_FusionClient->MapIsValid(map);
+    lua_pushboolean(L, valid);
+    return 1;
 }
 
 /** Send an RPC event. Events can be sent to a specific player or all players, and
@@ -3245,7 +3310,12 @@ static const luaL_reg Module_methods[] = {
     { "create_object", CreateObject },
     { "create_map_object", CreateMapObject },
     { "destroy_object", DestroyObject },
+
+    // map handling
+    { "map_add", MapAdd },
     { "map_change", MapChange },
+    { "map_remove", MapRemove },
+    { "map_is_valid", MapIsValid },
 
     // rpc and events
     { "send_rpc", SendRpc },
