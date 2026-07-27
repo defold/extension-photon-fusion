@@ -242,10 +242,10 @@
     desc: |
       Create an object.
     parameters:
-    - name: map
-      type: number
     - name: factory_url
       type: string
+    - name: map
+      type: number
     - name: owner_mode
       type: number
     - name: options
@@ -263,17 +263,61 @@
       type: string
       optional: True
 
+  - name: map_add
+    type: function
+    desc: |
+      Add map.
+    parameters:
+    - name: data
+      type: string
+    returns:
+    - name: Map
+      type: number
+      desc: |
+        Id
+        
+
   - name: map_change
     type: function
     desc: |
       Change map.
     parameters:
-    - name: index
-      type: number
-    - name: sequence
-      type: number
     - name: data
       type: string
+    returns:
+    - name: Map
+      type: number
+      desc: |
+        Id
+        
+
+  - name: map_remove
+    type: function
+    desc: |
+      Remove map.
+    parameters:
+    - name: Map
+      type: number
+      desc: |
+        Id
+        
+
+  - name: map_is_valid
+    type: function
+    desc: |
+      Checkl if map is valid.
+    parameters:
+    - name: Map
+      type: number
+      desc: |
+        Id
+        
+    returns:
+    - name: True
+      type: boolean
+      desc: |
+        If valid
+        
 
   - name: send_rpc
     type: function
@@ -302,7 +346,7 @@
   - name: subscribe_rpc
     type: function
     desc: |
-      Subscribe to RPC broadcat event. The events will be delivered as messages.
+      Subscribe to RPC broadcast event. The events will be delivered as messages.
     parameters:
     - name: rpc_event
       type: hash
@@ -426,6 +470,27 @@
         Id of the object to clear cooldown for
         
       optional: True
+
+  - name: respond_to_ownership_request
+    type: function
+    desc: |
+      Respond to a received ownership request
+    parameters:
+    - name: object
+      type: string
+      desc: |
+        Id of the object
+        
+    - name: requester
+      type: number
+      desc: |
+        Requesting player id
+        
+    - name: granted
+      type: boolean
+      desc: |
+        True if the request is granted
+        
 
   - name: set_room_send_rate
     type: function
@@ -773,6 +838,21 @@
     desc: |
       REPLICATION_MODE_AUTO
 
+  - name: FORCED_DISCONNECT_REASON_GENERIC
+    type: number
+    desc: |
+      FORCED_DISCONNECT_REASON_GENERIC
+
+  - name: FORCED_DISCONNECT_REASON_PROTOCOLINCOMPATIBLE
+    type: number
+    desc: |
+      FORCED_DISCONNECT_REASON_PROTOCOLINCOMPATIBLE
+
+  - name: FORCED_DISCONNECT_REASON_ROOMVERSIONMISMATCH
+    type: number
+    desc: |
+      FORCED_DISCONNECT_REASON_ROOMVERSIONMISMATCH
+
   - name: EVENT_OBJECT_READY
     type: number
     desc: |
@@ -872,4 +952,9 @@
     type: number
     desc: |
       EVENT_DISCONNECTED
+
+  - name: EVENT_DEFOLD_LOG_EVENT
+    type: number
+    desc: |
+      EVENT_DEFOLD_LOG_EVENT
 
