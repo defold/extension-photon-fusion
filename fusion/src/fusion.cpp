@@ -960,7 +960,6 @@ static void DeserializeFusionObject(FusionObject* fusion_object)
 
         if (component_type == g_Ctx->m_Spritec)
         {
-            dmLogInfo("  sprite");
             dmhash_t animation;
             float cursor;
             word_offset += PopHash(words + word_offset, &animation);
