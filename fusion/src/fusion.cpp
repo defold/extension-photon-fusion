@@ -1096,6 +1096,9 @@ static dmGameObject::Result DoCreateObject(dmhash_t id, dmMessage::URL* factory_
 
     SerializeFusionObject(fusion_object);
 
+    object->SetHasValidData();
+    object->SetSendUpdates(true);
+
     return dmGameObject::RESULT_OK;
 }
 
