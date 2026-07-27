@@ -1218,18 +1218,14 @@ static void Fusion_OnObjectDestroyed(const FusionCore::ObjectRoot* object, const
         dmLogInfo("DestroyModes Local");
         return;
     }
-    // if (mode == FusionCore::DestroyModes::Remote)
-    // {
-    //     dmLogInfo("DestroyModes Remote");
-    // }
-    // else if (mode == FusionCore::DestroyModes::SceneChange)
-    // {
-    //     dmLogInfo("DestroyModes SceneChange");
-    // }
-    // else if (mode == FusionCore::DestroyModes::Shutdown)
-    // {
-    //     dmLogInfo("DestroyModes Shutdown");
-    // }
+    if (mode == FusionCore::DestroyModes::Remote)
+    {
+        dmLogInfo("DestroyModes Remote");
+    }
+    else if (mode == FusionCore::DestroyModes::Shutdown)
+    {
+        dmLogInfo("DestroyModes Shutdown");
+    }
 
     FusionObject* fusion_object = GetFusionObjectFromObjectRoot(object);
     if (!fusion_object)
