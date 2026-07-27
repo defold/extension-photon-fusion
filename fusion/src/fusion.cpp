@@ -1498,12 +1498,12 @@ static void Fusion_OnMapChange(const std::unordered_map<FusionCore::Map, FusionC
         dmScript::PushHash(L, g_FusionEventOnMapChange);
 
         lua_newtable(L);
-        // lua_pushinteger(L, index);
-        // lua_setfield(L, -2, "index");
-        // lua_pushinteger(L, sequence);
-        // lua_setfield(L, -2, "sequence");
-        // lua_pushlstring(L, (char*)data.Ptr, data.Length);
-        // lua_setfield(L, -2, "data");
+        for (const auto& entry : data)
+        {
+            lua_pushinteger(L, entry.first);
+            lua_pushlstring(L, (const char*)entry.second.Ptr, entry.second.Length);
+            lua_settable(L, -3);
+        }
 
         CallListener(L, 3, 0);
     }
