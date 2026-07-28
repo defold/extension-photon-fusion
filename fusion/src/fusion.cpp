@@ -897,6 +897,11 @@ static void LerpObjectTransform(dmhash_t id, FusionObject* fusion_object)
 }
 static void DeserializeFusionObject(FusionObject* fusion_object)
 {
+    if (fusion_object == 0x0)
+    {
+        dmLogError("DeserializeFusionObject fusion object is null");
+        return;
+    }
     const dmhash_t id = fusion_object->m_Id;
     const FusionCore::ObjectRoot* object = fusion_object->m_SharedObject;
     // if (!g_Ctx->m_FusionClient->HasBeenUpdatedByPlugin(object))
@@ -904,6 +909,11 @@ static void DeserializeFusionObject(FusionObject* fusion_object)
     //     LerpObjectTransform(id, fusion_object);
     //     return;
     // }
+    if (object == 0x0)
+    {
+        dmLogError("DeserializeFusionObject shared object is null");
+        return;
+    }
 
     FusionCore::Word *words = object->Words.Ptr;
     if (words == 0x0)
