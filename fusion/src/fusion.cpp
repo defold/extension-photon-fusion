@@ -2627,7 +2627,12 @@ static int SendRpc(lua_State* L)
     bool ok = g_Ctx->m_FusionClient->SendUserRpc(rpc);
     lua_pushboolean(L, ok);
     // seems like a broadcast will not be sent to the local player
+    // broadcast messages are not sent to the local player
     if (target_player_id == 0)
+    {
+        Fusion_OnRpc(rpc);
+    }
+    else if ((target_player_id == g_Ctx->m_FusionClient->LocalPlayerId()) && (target_object_id != 0))
     {
         Fusion_OnRpc(rpc);
     }
