@@ -4,23 +4,23 @@ platforms:
 
     osx:
         context:
-            defines:  ["_EG_IMAC_PLATFORM"]
+            defines:  ["_EG_IMAC_PLATFORM", "PHOTON_PLATFORM_APPLE"]
             frameworks: ["CFNetwork", "CoreFoundation", "Foundation", "Security"]
             weakFrameworks: []
             flags:    ["-std=c++20", "-Wno-nontrivial-memcall"]
     ios:
         context:
-            defines:  ["_EG_IPHONE_PLATFORM"]
+            defines:  ["_EG_IPHONE_PLATFORM", "PHOTON_PLATFORM_APPLE"]
             frameworks: ["CFNetwork", "CoreFoundation", "Foundation", "Security"]
             weakFrameworks: []
             flags:    ["-std=c++20", "-Wno-nontrivial-memcall"]
     win32:
         context:
-            defines:  ["_EG_WINDOWS_PLATFORM"]
+            defines:  ["_EG_WINDOWS_PLATFORM", "PHOTON_PLATFORM_MICROSOFT"]
             flags:    ["-std=c++20", "-Wno-nontrivial-memcall"]
     android:
         context:
-            defines:  ["_EG_ANDROID_PLATFORM"]
+            defines:  ["_EG_ANDROID_PLATFORM", "PHOTON_PLATFORM_ANDROID"]
             flags:    ["-std=c++20", "-Wno-nontrivial-memcall", "-fno-exceptions", "-fno-rtti"]
     linux:
         context:
@@ -28,5 +28,5 @@ platforms:
             flags:    ["-std=c++17", "-Wno-nontrivial-memcall"]
     web:
         context:
-            defines:  ["_EG_EMSCRIPTEN_PLATFORM"]
+            defines:  ["_EG_EMSCRIPTEN_PLATFORM", "PHOTON_PLATFORM_WASM"]
             flags:    ["-std=c++20", "-Wno-nontrivial-memcall"]
