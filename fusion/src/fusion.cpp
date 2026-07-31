@@ -1636,7 +1636,7 @@ void Fusion_TickAfterFrameBegin(double dt)
  * Fusion Lua API functions
  *************************/
 
-static void DoInit(lua_State* L, const char* appId, const char* appVersion)
+static void DoInit(lua_State* L, const char* appId, const char* appVersion, const char* protocol)
 {
     dmLogInfo("DoInit");
     g_Ctx->m_FusionObjects.SetCapacity(100);
@@ -1650,6 +1650,25 @@ static void DoInit(lua_State* L, const char* appId, const char* appVersion)
     PhotonMatchmaking::ClientConstructOptions options = PhotonMatchmaking::ClientConstructOptions();
     options.appId = ToStringType(appId);
     options.appVersion = ToStringType(appVersion);
+    if (protocol)
+    {
+        if (strcmp("wss", protocol) == 0)
+        {
+            options.protocol = PhotonMatchmaking::ConnectionProtocol::WSS;
+        }
+        else if (strcmp("ws", protocol) == 0)
+        {
+            options.protocol = PhotonMatchmaking::ConnectionProtocol::WS;
+        }
+        else if (strcmp("tcp", protocol) == 0)
+        {
+            options.protocol = PhotonMatchmaking::ConnectionProtocol::TCP;
+        }
+        else
+        {
+            options.protocol = PhotonMatchmaking::ConnectionProtocol::UDP;
+        }
+    }
     PhotonMatchmaking::RealtimeClient* realtimeClient = new PhotonMatchmaking::RealtimeClient(options);
 
     g_Ctx->m_FusionClient = new FusionCore::Client(*realtimeClient);
@@ -1700,7 +1719,12 @@ static int Init(lua_State* L)
 
     const char* appId = luaL_checkstring(L, 1);
     const char* appVersion = luaL_checkstring(L, 2);
-    DoInit(L, appId, appVersion);
+    const char* protocol = 0;
+    if (lua_isstring(L, 3))
+    {
+        protocol = luaL_checkstring(L, 3);
+    }
+    DoInit(L, appId, appVersion, protocol);
 
     return 0;
 }
@@ -1716,7 +1740,12 @@ static int InitFromSettings(lua_State* L)
 
     const char* appId = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "fusion.app_id", "");
     const char* appVersion = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "fusion.app_id", "");
-    DoInit(L, appId, appVersion);
+    const char* protocol = 0;
+#if defined(DM_PLATFORM_HTML5)
+    bool use_wss = (dmConfigFile::GetInt(g_Ctx->m_ConfigFile, "fusion.use_wss", 0) == 1);
+    protocol = use_wss ? "wss" : "ws";
+#endif
+    DoInit(L, appId, appVersion, protocol);
 
     return 0;
 }
