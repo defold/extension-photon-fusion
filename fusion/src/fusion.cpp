@@ -921,11 +921,11 @@ static void DeserializeFusionObject(FusionObject* fusion_object)
         return;
     }
 
-    // if (!object->Words.IsValid())
-    // {
-    //     dmLogWarning("DeserializeFusionObject words is not valid");
-    //     return;
-    // }
+    if (!object->Words.IsValid())
+    {
+        dmLogWarning("DeserializeFusionObject words is not valid");
+        return;
+    }
 
     if (!object->EngineBlob.Valid())
     {

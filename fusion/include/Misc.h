@@ -49,7 +49,7 @@ namespace FusionCore
 		T*     Ptr{nullptr};
 		size_t Length{0};
 
-		bool IsValid() { return Ptr != nullptr && Length > 0; }
+		bool IsValid() const { return Ptr != nullptr && Length > 0; }
 
 		void Init(const size_t length)
 		{
