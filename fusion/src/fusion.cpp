@@ -915,9 +915,21 @@ static void DeserializeFusionObject(FusionObject* fusion_object)
         return;
     }
 
-    FusionCore::Word *words = object->Words.Ptr;
-    if (words == 0x0)
+    if (!object->GetHasValidData())
     {
+        dmLogWarning("DeserializeFusionObject does not have valid data");
+        return;
+    }
+
+    if (!object->Words.IsValid())
+    {
+        dmLogWarning("DeserializeFusionObject words is not valid");
+        return;
+    }
+
+    if (!object->EngineBlob.Valid())
+    {
+        dmLogWarning("DeserializeFusionObject header is not valid");
         return;
     }
 
@@ -928,6 +940,7 @@ static void DeserializeFusionObject(FusionObject* fusion_object)
         return;
     }
 
+    FusionCore::Word *words = object->Words.Ptr;
     uint8_t* header = object->EngineBlob.Ptr;
     size_t header_offset = 0;
     size_t word_offset = 0;
