@@ -13,6 +13,12 @@
       type: string
     - name: app_version
       type: string
+    - name: protocol
+      type: string
+      desc: |
+        One of wss, ws, tcp or udp
+        
+      optional: True
 
   - name: init_from_settings
     type: function
@@ -53,10 +59,10 @@
     desc: |
       Get connection state.
     returns:
-    - name: Connection
+    - name: state
       type: number
       desc: |
-        State
+        The connection state
         
 
   - name: get_disconnect_cause
@@ -64,10 +70,10 @@
     desc: |
       Get disconnect cause.
     returns:
-    - name: Disconnect
+    - name: cause
       type: number
       desc: |
-        Cause
+        The disconnect cause
         
 
   - name: join_or_create_room_random
@@ -180,10 +186,13 @@
       type: number
     - name: owner_mode
       type: number
-    - name: properties
+    - name: options
       type: table
       desc: |
-        Which script properties to sync
+        Table with `properties` and `replication_mode` fields. The
+        properties field should be a id,property map with script ids and properties to
+        sync. Replication mode should be one of the established `REPLICATION_MODE`
+        constants.
         
     - name: id
       type: string
@@ -219,13 +228,19 @@
       desc: |
         Owner mode of spawned object
         
-    - name: script_properties
+    - name: options
       type: table
+      desc: |
+        Table with `properties` and `replication_mode` fields. The
+        properties field should be a id,property map with script ids and properties to
+        sync. Replication mode should be one of the established `REPLICATION_MODE`
+        constants.
+        
     returns:
-    - name: Id
+    - name: id
       type: hash
       desc: |
-        Of the spawned game object
+        Id of the spawned game object
         
 
   - name: despawn
@@ -271,10 +286,10 @@
     - name: data
       type: string
     returns:
-    - name: Map
+    - name: id
       type: number
       desc: |
-        Id
+        Map id
         
 
   - name: map_change
@@ -285,10 +300,10 @@
     - name: data
       type: string
     returns:
-    - name: Map
+    - name: id
       type: number
       desc: |
-        Id
+        Map id
         
 
   - name: map_remove
@@ -296,27 +311,27 @@
     desc: |
       Remove map.
     parameters:
-    - name: Map
+    - name: map
       type: number
       desc: |
-        Id
+        Map id
         
 
   - name: map_is_valid
     type: function
     desc: |
-      Checkl if map is valid.
+      Check if map is valid.
     parameters:
-    - name: Map
+    - name: map
       type: number
       desc: |
-        Id
+        Map id
         
     returns:
-    - name: True
+    - name: valid
       type: boolean
       desc: |
-        If valid
+        True if valid
         
 
   - name: send_rpc
@@ -339,6 +354,7 @@
       type: hash
     - name: data
       type: table
+      optional: True
     returns:
     - name: ok
       type: boolean
@@ -354,10 +370,11 @@
         Event to subscribe to
         
     - name: id
-      type: hash?
+      type: hash
       desc: |
         Subscriber id
         
+      optional: True
 
   - name: unsubscribe_rpc
     type: function
@@ -370,10 +387,11 @@
         Event to unsubscribe to
         
     - name: id
-      type: hash?
+      type: hash
       desc: |
         Which object should unsubscribe
         
+      optional: True
 
   - name: on_event
     type: function
@@ -388,10 +406,10 @@
     desc: |
       Get the player id of the local client
     returns:
-    - name: The
+    - name: id
       type: number
       desc: |
-        Player id of the local client
+        The player id of the local client
         
 
   - name: get_owner_id
@@ -406,10 +424,10 @@
         
       optional: True
     returns:
-    - name: The
+    - name: id
       type: number
       desc: |
-        Player id of the object's owner
+        The player id of the object's owner
         
 
   - name: has_authority
@@ -439,10 +457,10 @@
         
       optional: True
     returns:
-    - name: True
+    - name: has_owner
       type: boolean
       desc: |
-        If the object has an owner
+        True if the object has an owner
         
 
   - name: want_authority
@@ -661,11 +679,6 @@
       type: hash
       desc: |
         User key to remove
-        
-    - name: id
-      type: hash
-      desc: |
-        Object to remove user visibility key from
         
 
   - name: OWNERMODE_TRANSACTION

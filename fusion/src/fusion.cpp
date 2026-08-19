@@ -1710,6 +1710,7 @@ static void DoInit(lua_State* L, const char* appId, const char* appVersion, cons
  * @name init
  * @string app_id
  * @string app_version
+ * @string [protocol] One of wss, ws, tcp or udp
  */
 static int Init(lua_State* L)
 {
@@ -1739,7 +1740,7 @@ static int InitFromSettings(lua_State* L)
     dmLogInfo("InitFromSettings");
 
     const char* appId = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "fusion.app_id", "");
-    const char* appVersion = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "fusion.app_id", "");
+    const char* appVersion = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "fusion.app_version", "");
     const char* protocol = 0;
 #if defined(DM_PLATFORM_HTML5)
     bool use_wss = (dmConfigFile::GetInt(g_Ctx->m_ConfigFile, "fusion.use_wss", 0) == 1);
@@ -1903,7 +1904,7 @@ static int Stop(lua_State* L)
 
 /** Get connection state
  * @name get_state
- * @treturn number Connection state
+ * @treturn number state The connection state
  */
 static int GetState(lua_State* L)
 {
@@ -1923,7 +1924,7 @@ static int GetState(lua_State* L)
 
 /** Get disconnect cause
  * @name get_disconnect_cause
- * @treturn number Disconnect cause
+ * @treturn number cause The disconnect cause
  */
 static int GetDisconnectCause(lua_State* L)
 {
@@ -2274,7 +2275,10 @@ static int EnableDebug(lua_State* L)
  * @name create_map_object
  * @number map
  * @number owner_mode
- * @table properties Which script properties to sync
+ * @table options Table with `properties` and `replication_mode` fields. The
+ * properties field should be a id,property map with script ids and properties to
+ * sync. Replication mode should be one of the established `REPLICATION_MODE`
+ * constants.
  * @string [id]
  */
 static int CreateMapObject(lua_State* L)
@@ -2352,8 +2356,11 @@ static int CreateMapObject(lua_State* L)
  * @quat [rotation] Initial rotation of created game object
  * @number map The map to which this object belongs
  * @number owner_mode Owner mode of spawned object
- * @table script_properties 
- * @treturn hash Id of the spawned game object
+ * @table options Table with `properties` and `replication_mode` fields. The
+ * properties field should be a id,property map with script ids and properties to
+ * sync. Replication mode should be one of the established `REPLICATION_MODE`
+ * constants.
+ * @treturn hash id Id of the spawned game object
  */
 static int SpawnObject(lua_State* L)
 {
@@ -2533,7 +2540,7 @@ static int DestroyObject(lua_State* L)
 /** Add map
  * @name map_add
  * @string data
- * @treturn number Map id
+ * @treturn number id Map id
  */
 static int MapAdd(lua_State* L)
 {
@@ -2557,7 +2564,7 @@ static int MapAdd(lua_State* L)
 /** Change map
  * @name map_change
  * @string data
- * @treturn number Map id
+ * @treturn number id Map id
  */
 static int MapChange(lua_State* L)
 {
@@ -2579,7 +2586,7 @@ static int MapChange(lua_State* L)
 
 /** Remove map
  * @name map_remove
- * @number Map id
+ * @number map Map id
  */
 static int MapRemove(lua_State* L)
 {
@@ -2597,10 +2604,10 @@ static int MapRemove(lua_State* L)
     return 0;
 }
 
-/** Checkl if map is valid
+/** Check if map is valid
  * @name map_is_valid
- * @number Map id
- * @treturn boolean True if valid
+ * @number map Map id
+ * @treturn boolean valid True if valid
  */
 static int MapIsValid(lua_State* L)
 {
@@ -2625,7 +2632,7 @@ static int MapIsValid(lua_State* L)
  * @number target_player 0 = all, specific PlayerId = targeted
  * @hash target_object Id of game object, nil for broadcast
  * @hash event
- * @table data
+ * @table [data]
  * @treturn boolean ok
  */
 static int SendRpc(lua_State* L)
@@ -2694,7 +2701,7 @@ static int SendRpc(lua_State* L)
 /** Subscribe to RPC broadcast event. The events will be delivered as messages.
  * @name subscribe_rpc
  * @hash rpc_event Event to subscribe to
- * @hash? id Subscriber id
+ * @hash [id] Subscriber id
  */
 static int SubscribeRpc(lua_State* L)
 {
@@ -2739,7 +2746,7 @@ static int SubscribeRpc(lua_State* L)
 /** Unsubscribe from a subscribed RPC event
  * @name unsubscribe_rpc
  * @hash rpc_event Event to unsubscribe to
- * @hash? id Which object should unsubscribe
+ * @hash [id] Which object should unsubscribe
  */
 static int UnsubscribeRpc(lua_State* L)
 {
@@ -2797,7 +2804,7 @@ static int OnEvent(lua_State* L)
 /**
  * Get the player id of the local client
  * @name get_local_player_id
- * @treturn number The player id of the local client
+ * @treturn number id The player id of the local client
  */
 static int GetLocalPlayerId(lua_State* L)
 {
@@ -2819,7 +2826,7 @@ static int GetLocalPlayerId(lua_State* L)
  * Get the player id of the current owner of an object
  * @name get_owner_id
  * @string [id] Id of the object to get the owner for
- * @treturn number The player id of the object's owner
+ * @treturn number id The player id of the object's owner
  */
 static int GetOwnerId(lua_State* L)
 {
@@ -2884,7 +2891,7 @@ static int HasAuthority(lua_State* L)
  * Check if an object has an owner
  * @name has_owner
  * @string [id] Id of the object
- * @treturn boolean True if the object has an owner
+ * @treturn boolean has_owner True if the object has an owner
  */
 static int HasOwner(lua_State* L)
 {
@@ -3321,7 +3328,6 @@ static int AddUserKey(lua_State* L)
  * Remove a user visibility key from an object
  * @name remove_user_key
  * @hash key User key to remove
- * @hash id Object to remove user visibility key from
  */
 static int RemoveUserKey(lua_State* L)
 {
