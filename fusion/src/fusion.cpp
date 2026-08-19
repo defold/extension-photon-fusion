@@ -1944,8 +1944,8 @@ static int GetDisconnectCause(lua_State* L)
 
 /** Join or create random room
  * @name join_or_create_room_random
- * @table create_room_options
- * @table matchmaking_options
+ * @table [create_room_options]
+ * @table [matchmaking_options]
  */
 static int JoinRandomOrCreateRoom(lua_State* L)
 {
@@ -2052,8 +2052,8 @@ static int JoinRoom(lua_State* L)
 /** Join or create room
  * @name join_or_create_room
  * @string room_name
- * @table create_room_options
- * @table join_room_options
+ * @table [create_room_options]
+ * @table [join_room_options]
  */
 static int JoinOrCreateRoom(lua_State* L)
 {
@@ -2091,7 +2091,7 @@ static int JoinOrCreateRoom(lua_State* L)
 /** Create room
  * @name create_room
  * @string room_name
- * @table create_room_options
+ * @table [create_room_options]
  */
 static int CreateRoom(lua_State* L)
 {
@@ -2826,7 +2826,7 @@ static int GetLocalPlayerId(lua_State* L)
  * Get the player id of the current owner of an object
  * @name get_owner_id
  * @string [id] Id of the object to get the owner for
- * @treturn number id The player id of the object's owner
+ * @treturn number owner_id The player id of the object's owner
  */
 static int GetOwnerId(lua_State* L)
 {
@@ -3303,7 +3303,7 @@ static int SetAreaKeys(lua_State* L)
 }
 
 /**
- * Add a user visibility key
+ * Add a user visibility key to the set of local interest keys.
  * @name add_user_key
  * @hash key User key to add
  */
@@ -3325,7 +3325,7 @@ static int AddUserKey(lua_State* L)
 }
 
 /**
- * Remove a user visibility key from an object
+ * Remove a user visibility key from the set of local interest keys.
  * @name remove_user_key
  * @hash key User key to remove
  */

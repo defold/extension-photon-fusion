@@ -81,8 +81,8 @@ function fusion.stop() end
 function fusion.get_state() end
 ---@return number cause
 function fusion.get_disconnect_cause() end
----@param create_room_options table
----@param matchmaking_options table
+---@param create_room_options table?
+---@param matchmaking_options table?
 function fusion.join_or_create_room_random(create_room_options,matchmaking_options) end
 ---@param matchmaking_options table
 function fusion.join_room_random(matchmaking_options) end
@@ -90,11 +90,11 @@ function fusion.join_room_random(matchmaking_options) end
 ---@param join_room_options table
 function fusion.join_room(room_name,join_room_options) end
 ---@param room_name string
----@param create_room_options table
----@param join_room_options table
+---@param create_room_options table?
+---@param join_room_options table?
 function fusion.join_or_create_room(room_name,create_room_options,join_room_options) end
 ---@param room_name string
----@param create_room_options table
+---@param create_room_options table?
 function fusion.create_room(room_name,create_room_options) end
 ---@param will_come_back boolean
 ---@param send_auth_cookie boolean
@@ -160,7 +160,7 @@ function fusion.on_event(listener) end
 ---@return number id
 function fusion.get_local_player_id() end
 ---@param id string?
----@return number id
+---@return number owner_id
 function fusion.get_owner_id(id) end
 ---@param id string?
 ---@return boolean authority

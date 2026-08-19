@@ -83,8 +83,10 @@
     parameters:
     - name: create_room_options
       type: table
+      optional: True
     - name: matchmaking_options
       type: table
+      optional: True
 
   - name: join_room_random
     type: function
@@ -113,8 +115,10 @@
       type: string
     - name: create_room_options
       type: table
+      optional: True
     - name: join_room_options
       type: table
+      optional: True
 
   - name: create_room
     type: function
@@ -125,6 +129,7 @@
       type: string
     - name: create_room_options
       type: table
+      optional: True
 
   - name: leave_room
     type: function
@@ -424,7 +429,7 @@
         
       optional: True
     returns:
-    - name: id
+    - name: owner_id
       type: number
       desc: |
         The player id of the object's owner
@@ -662,7 +667,7 @@
   - name: add_user_key
     type: function
     desc: |
-      Add a user visibility key
+      Add a user visibility key to the set of local interest keys.
     parameters:
     - name: key
       type: hash
@@ -673,7 +678,7 @@
   - name: remove_user_key
     type: function
     desc: |
-      Remove a user visibility key from an object
+      Remove a user visibility key from the set of local interest keys.
     parameters:
     - name: key
       type: hash
