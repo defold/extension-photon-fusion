@@ -84,10 +84,10 @@ function fusion.get_disconnect_cause() end
 ---@param create_room_options table?
 ---@param matchmaking_options table?
 function fusion.join_or_create_room_random(create_room_options,matchmaking_options) end
----@param matchmaking_options table
+---@param matchmaking_options table?
 function fusion.join_room_random(matchmaking_options) end
 ---@param room_name string
----@param join_room_options table
+---@param join_room_options table?
 function fusion.join_room(room_name,join_room_options) end
 ---@param room_name string
 ---@param create_room_options table?
@@ -96,8 +96,8 @@ function fusion.join_or_create_room(room_name,create_room_options,join_room_opti
 ---@param room_name string
 ---@param create_room_options table?
 function fusion.create_room(room_name,create_room_options) end
----@param will_come_back boolean
----@param send_auth_cookie boolean
+---@param will_come_back boolean?
+---@param send_auth_cookie boolean?
 function fusion.leave_room(will_come_back,send_auth_cookie) end
 ---@return boolean connected
 function fusion.is_connected() end

@@ -1981,7 +1981,7 @@ static int JoinRandomOrCreateRoom(lua_State* L)
 
 /** Join random room
  * @name join_room_random
- * @table matchmaking_options
+ * @table [matchmaking_options]
  */
 static int JoinRandomRoom(lua_State* L)
 {
@@ -2016,7 +2016,7 @@ static int JoinRandomRoom(lua_State* L)
 /** Join room
  * @name join_room
  * @string room_name
- * @table join_room_options
+ * @table [join_room_options]
  */
 static int JoinRoom(lua_State* L)
 {
@@ -2126,8 +2126,8 @@ static int CreateRoom(lua_State* L)
 
 /** Leave room
  * @name leave_room
- * @bool will_come_back
- * @bool send_auth_cookie
+ * @bool [will_come_back]
+ * @bool [send_auth_cookie]
  */
 static int LeaveRoom(lua_State* L)
 {

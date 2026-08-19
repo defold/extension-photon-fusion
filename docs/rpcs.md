@@ -18,12 +18,12 @@ local target_player = 0
 local target_object = nil
 local event = hash("chat_message")
 local data = { text = "Hello" }
-fusion.rpc(target_player, target_object, event, data)
+fusion.send_rpc(target_player, target_object, event, data)
 
-fusion.on_event(function(self, event_id, data)
+fusion.on_event(function(self, event_id, event)
 	if event_id == fusion.EVENT_RPC then
-		print(data.event)				-- "chat_message"
-		print(message.text)				-- "Hello"
+		print(event.id)				-- "chat_message"
+		print(event.data.text)		-- "Hello"
 	end
 end)
 ```
@@ -38,7 +38,7 @@ local target_player = 0
 local target_object = nil
 local event = hash("chat_message")
 local data = { text = "Hello" }
-fusion.rpc(target_player, target_object, event, data)
+fusion.send_rpc(target_player, target_object, event, data)
 
 
 -- send to a specific player
@@ -46,7 +46,7 @@ local target_player = 1234
 local target_object = nil
 local event = hash("chat_message")
 local data = { text = "Hello" }
-fusion.rpc(target_player, target_object, event, data)
+fusion.send_rpc(target_player, target_object, event, data)
 
 
 -- send to the owner of an object
@@ -54,7 +54,7 @@ local target_player = fusion.OBJECT_OWNER_PLAYER_ID
 local target_object = "/coin"
 local event = hash("chat_message")
 local data = { text = "Hello" }
-fusion.rpc(target_player, target_object, event, data)
+fusion.send_rpc(target_player, target_object, event, data)
 ```
 
 
@@ -62,10 +62,10 @@ fusion.rpc(target_player, target_object, event, data)
 All incoming RPCs are received as events of type `fusion.EVENT_RPC` in the `fusion.on_event` listener:
 
 ```lua
-fusion.on_event(function(self, event_id, data)
+fusion.on_event(function(self, event_id, event)
 	if event_id == fusion.EVENT_RPC then
-		print(data.event)				-- "chat_message"
-		print(message.text)				-- "Hello"
+		print(event.id)				-- "chat_message"
+		print(event.data.text)		-- "Hello"
 	end
 end)
 ```

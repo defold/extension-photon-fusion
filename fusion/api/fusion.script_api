@@ -95,6 +95,7 @@
     parameters:
     - name: matchmaking_options
       type: table
+      optional: True
 
   - name: join_room
     type: function
@@ -105,6 +106,7 @@
       type: string
     - name: join_room_options
       type: table
+      optional: True
 
   - name: join_or_create_room
     type: function
@@ -138,8 +140,10 @@
     parameters:
     - name: will_come_back
       type: boolean
+      optional: True
     - name: send_auth_cookie
       type: boolean
+      optional: True
 
   - name: is_connected
     type: function
