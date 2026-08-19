@@ -1324,7 +1324,7 @@ static void Fusion_OnOwnershipResponse(FusionCore::ObjectRoot* object, bool gran
     lua_State* L = SetupListener();
     if(L)
     {
-        dmScript::PushHash(L, g_FusionEventOnOwnershipRequest);
+        dmScript::PushHash(L, g_FusionEventOnOwnershipResponse);
         lua_newtable(L);
         dmScript::PushHash(L, fusion_object->m_Id);
         lua_setfield(L, -2, "id");
