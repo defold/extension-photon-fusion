@@ -11,13 +11,7 @@
 	#if defined(__aarch64__)
 		#define PHOTON_PLATFORM_SUPPORTED 0
 	#else
-		#define PHOTON_PLATFORM_SUPPORTED 0
-	#endif
-#elif defined(DM_PLATFORM_WINDOWS)
-	#if defined(__aarch64__)
 		#define PHOTON_PLATFORM_SUPPORTED 1
-	#else
-		#define PHOTON_PLATFORM_SUPPORTED 0
 	#endif
 #elif defined(DM_PLATFORM_ANDROID)
 	#if defined(__aarch64__)
