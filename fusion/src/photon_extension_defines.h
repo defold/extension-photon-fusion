@@ -13,6 +13,8 @@
 	#else
 		#define PHOTON_PLATFORM_SUPPORTED 1
 	#endif
+#elif defined(IOS_SIMULATOR)
+	#define PHOTON_PLATFORM_SUPPORTED 0
 #elif defined(DM_PLATFORM_ANDROID)
 	#if defined(__aarch64__)
 		#define PHOTON_PLATFORM_SUPPORTED 1
