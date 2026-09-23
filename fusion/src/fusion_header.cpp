@@ -2,7 +2,7 @@
 
 #if PHOTON_PLATFORM_SUPPORTED
 
-#include <dmsdk/sdk.h>
+#include "fusion_sdk.h"
 #include "fusion_header.h"
 #include "Aliases.h"
 

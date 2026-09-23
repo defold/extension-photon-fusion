@@ -2,7 +2,7 @@
 
 #if PHOTON_PLATFORM_SUPPORTED
 
-#include <dmsdk/sdk.h>
+#include "fusion_sdk.h"
 #include "fusion_helpers.h"
 #include "StringType.h"
 #include "PropertyValue.h"

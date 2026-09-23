@@ -12,7 +12,7 @@
 #define DLIB_LOG_DOMAIN "fusion"
 #endif
 
-#include <dmsdk/sdk.h>
+#include "fusion_sdk.h"
 #include <dmsdk/dlib/mutex.h>
 #include <dmsdk/gamesys/components/comp_model.h>
 #include <dmsdk/gamesys/components/comp_factory.h>
@@ -383,7 +383,7 @@ static void DumpFusionObjects()
     {
         dmhash_t id = iter.GetKey();
         FusionObject* fusion_object = iter.GetValue();
-        dmLogInfo("  %s (%llu) = %p with shared object %p", dmHashReverseSafe64(id), id, fusion_object, fusion_object->m_SharedObject);
+        dmLogInfo("  %s (%" PRIu64 ") = %p with shared object %p", dmHashReverseSafe64(id), id, fusion_object, fusion_object->m_SharedObject);
     }
 }
 static bool HasFusionObject(dmhash_t id)

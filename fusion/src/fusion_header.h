@@ -2,7 +2,7 @@
 #ifndef FUSION_HEADER_H
 #define FUSION_HEADER_H
 
-#include <dmsdk/sdk.h>
+#include "fusion_sdk.h"
 #include "Aliases.h"
 
 int32_t CompressFloat(float f);

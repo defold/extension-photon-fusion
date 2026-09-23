@@ -2,7 +2,7 @@
 #ifndef FUSION_HELPERS_H
 #define FUSION_HELPERS_H
 
-#include <dmsdk/sdk.h>
+#include "fusion_sdk.h"
 #include "StringType.h"
 #include "PropertyValue.h"
 #include "CreateRoomOptions.h"
