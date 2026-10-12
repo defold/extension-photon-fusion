@@ -228,7 +228,7 @@ dmhash_t ResolveId(lua_State* L, int index)
 {
     if (lua_isnoneornil(L, index))
     {
-        dmGameObject::HInstance caller_instance = dmScript::CheckGOInstance(L);
+        dmGameObject::HGameObject caller_instance = dmScript::CheckGOInstance(L);
         return dmGameObject::GetIdentifier(caller_instance);
     }
     else

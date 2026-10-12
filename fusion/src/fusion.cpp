@@ -440,7 +440,7 @@ static dmhash_t DeleteFusionObject(const FusionCore::ObjectRoot* object)
     dmhash_t id = fusion_object->m_Id;
     if (id != 0)
     {
-        dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
+        dmGameObject::HGameObject instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
         dmGameObject::Delete(g_Ctx->m_Collection, instance, true);
     }
     g_Ctx->m_FusionObjects.Erase(id);
@@ -450,8 +450,8 @@ static dmhash_t DeleteFusionObject(const FusionCore::ObjectRoot* object)
 
 static void DeleteGameObject(dmhash_t id)
 {
-    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
-    if (instance != 0x0)
+    dmGameObject::HGameObject instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
+    if (instance != 0)
     {
         dmGameObject::Delete(g_Ctx->m_Collection, instance, true);
     }
@@ -471,7 +471,7 @@ static bool CreateGameObject(dmhash_t id, const FusionCore::ObjectRoot* object)
 
     //
     // get factory component
-    dmGameObject::HInstance factory_go = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, path);
+    dmGameObject::HGameObject factory_go = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, path);
     if (factory_go == 0)
     {
         dmLogError("Main collection does not have a game object named %s", dmHashReverseSafe64(path));
@@ -494,7 +494,7 @@ static bool CreateGameObject(dmhash_t id, const FusionCore::ObjectRoot* object)
     dmVMath::Vector3 scale = dmVMath::Vector3(1.0, 1.0, 1.0);
     
     dmGameObject::HPropertyContainer properties = 0x0;
-    dmGameObject::HInstance instance;
+    dmGameObject::HGameObject instance;
     r = dmGameSystem::CompFactorySpawn(
             world, factory, g_Ctx->m_Collection,
             id, 
@@ -513,7 +513,7 @@ static FusionObject* CreateFusionObject(dmhash_t id, FusionCore::ObjectRoot* obj
         return fusion_object;
     }
 
-    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
+    dmGameObject::HGameObject instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
 
     if (g_Ctx->m_FusionObjects.Full())
     {
@@ -550,38 +550,38 @@ static FusionObject* CreateFusionObject(dmhash_t id, FusionCore::ObjectRoot* obj
     return fusion_object;
 }
 
-static bool IsPropertyVector3(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+static bool IsPropertyVector3(dmGameObject::HGameObject instance, dmhash_t component_id, dmhash_t property_id)
 {
     dmVMath::Vector3 out;
     return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsVector3(instance, component_id, property_id, &out));
 }
-static bool IsPropertyVector4(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+static bool IsPropertyVector4(dmGameObject::HGameObject instance, dmhash_t component_id, dmhash_t property_id)
 {
     dmVMath::Vector4 out;
     return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsVector4(instance, component_id, property_id, &out));
 }
-static bool IsPropertyQuat(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+static bool IsPropertyQuat(dmGameObject::HGameObject instance, dmhash_t component_id, dmhash_t property_id)
 {
     dmVMath::Quat out;
     return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsQuat(instance, component_id, property_id, &out));
 }
-static bool IsPropertyFloat(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+static bool IsPropertyFloat(dmGameObject::HGameObject instance, dmhash_t component_id, dmhash_t property_id)
 {
     float out;
     return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsFloat(instance, component_id, property_id, &out));
 }
-static bool IsPropertyBool(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+static bool IsPropertyBool(dmGameObject::HGameObject instance, dmhash_t component_id, dmhash_t property_id)
 {
     bool out;
     return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsBool(instance, component_id, property_id, &out));
 }
-static bool IsPropertyHash(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id)
+static bool IsPropertyHash(dmGameObject::HGameObject instance, dmhash_t component_id, dmhash_t property_id)
 {
     dmhash_t out;
     return (dmGameObject::PROPERTY_RESULT_OK == dmGameObject::GetPropertyAsHash(instance, component_id, property_id, &out));
 }
 
-static bool IsPropertySynced(dmGameObject::HInstance instance, dmhash_t component_id, dmhash_t property_id, ScriptProperties* properties)
+static bool IsPropertySynced(dmGameObject::HGameObject instance, dmhash_t component_id, dmhash_t property_id, ScriptProperties* properties)
 {
     dmArray<dmhash_t>** props = properties->Get(component_id);
     if (props != 0x0)
@@ -619,7 +619,7 @@ static bool BuildObjectHeader(dmhash_t id, dmMessage::URL* factory_url, FusionOb
         words_count = 3 + 4 + 3;
     }
 
-    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
+    dmGameObject::HGameObject instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
     uint16_t component_index = 0;
     while (true)
     {
@@ -753,7 +753,7 @@ static void SerializeFusionObject(FusionObject* fusion_object)
     const dmhash_t id = fusion_object->m_Id;
     const FusionCore::ObjectRoot* object = fusion_object->m_SharedObject;
 
-    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
+    dmGameObject::HGameObject instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
 
     FusionCore::Word *words = object->Words.Ptr;
     dmVMath::Point3 pos = dmGameObject::GetPosition(instance);
@@ -881,7 +881,7 @@ static void SerializeFusionObject(FusionObject* fusion_object)
 
 static void LerpObjectTransform(dmhash_t id, FusionObject* fusion_object)
 {
-    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
+    dmGameObject::HGameObject instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
 
     dmVMath::Point3 curpos = dmGameObject::GetPosition(instance);
     dmVMath::Point3 newpos = LerpPoint(0.1, curpos, fusion_object->m_Position);
@@ -933,7 +933,7 @@ static void DeserializeFusionObject(FusionObject* fusion_object)
         return;
     }
 
-    dmGameObject::HInstance instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
+    dmGameObject::HGameObject instance = dmGameObject::GetInstanceFromIdentifier(g_Ctx->m_Collection, id);
     if (!instance)
     {
         dmLogWarning("Fusion_TickAfterFrameBegin unable to find object with id %s", dmHashReverseSafe64(id));
@@ -1696,7 +1696,7 @@ static void DoInit(lua_State* L, const char* appId, const char* appVersion, cons
 
     g_Ctx->m_FusionDefoldLogOutput = new FusionDefoldLogOutput();
 
-    dmGameObject::HInstance caller_instance = dmScript::CheckGOInstance(L);
+    dmGameObject::HGameObject caller_instance = dmScript::CheckGOInstance(L);
     g_Ctx->m_Collection = dmGameObject::GetCollection(caller_instance);
     g_Ctx->m_Scriptc = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("scriptc"));
     g_Ctx->m_Spritec = dmGameObject::GetComponentTypeIndex(g_Ctx->m_Collection, dmHashString64("spritec"));
@@ -2373,7 +2373,7 @@ static int SpawnObject(lua_State* L)
 
     DM_LUA_STACK_CHECK(L, 1);
 
-    dmGameObject::HInstance caller_instance = dmScript::CheckGOInstance(L);
+    dmGameObject::HGameObject caller_instance = dmScript::CheckGOInstance(L);
     dmGameObject::HCollection collection = dmGameObject::GetCollection(caller_instance);
 
     dmGameSystem::HFactoryWorld factory_world;
@@ -2412,7 +2412,7 @@ static int SpawnObject(lua_State* L)
     int ref = dmScript::Ref(L, LUA_REGISTRYINDEX);
 
     dmhash_t id = dmGameObject::CreateInstanceId();
-    dmGameObject::HInstance instance;
+    dmGameObject::HGameObject instance;
     dmGameObject::Result r = dmGameSystem::CompFactorySpawn(
         factory_world, factory_component, collection,
         id, 
