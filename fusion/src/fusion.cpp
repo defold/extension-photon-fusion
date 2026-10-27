@@ -33,6 +33,7 @@
 #include "fusion_messages.h"
 #include "fusion_header.h"
 #include "fusion_helpers.h"
+#include "fusion_auth.h"
 
 
 class FusionDefoldLogOutput : public PhotonCommon::LogOutput
@@ -1753,7 +1754,14 @@ static int InitFromSettings(lua_State* L)
 
 /** Connect Fusion
  * @name connect
- * @string [user]
+ * @string [user] Player display name, separate from the authentication user id.
+ * @table [auth] Authentication options. Omit or pass nil for anonymous authentication.
+ * Optional fields: `type` (a `fusion.AUTH_TYPE_*` constant, defaults to `AUTH_TYPE_NONE`),
+ * `user_id` (string), `parameters` (URL-encoded query string without a leading `?`),
+ * and `data` (POST data: a string or a table with string keys and string, number or
+ * boolean values). An empty table is an empty property map. Nested tables are not
+ * supported. Configure the provider and disable anonymous access in the Photon
+ * dashboard to require authentication.
  */
 static int Connect(lua_State* L)
 {
@@ -1774,25 +1782,26 @@ static int Connect(lua_State* L)
     DM_LUA_STACK_CHECK(L, 0);
 
     dmLogInfo("Connect ConnectOptions");
-    PhotonMatchmaking::ConnectOptions connectOptions = PhotonMatchmaking::ConnectOptions();
-    connectOptions.useBackgroundSendReceiveThread = false;
-
-    const char* username = 0x0;
-    if (lua_isstring(L, 1))
+    const char* auth_error;
     {
-        username = luaL_checkstring(L, 1);
+        PhotonMatchmaking::ConnectOptions connectOptions;
+        connectOptions.useBackgroundSendReceiveThread = false;
+        auth_error = ReadAuthenticationValues(L, 2, connectOptions.auth);
+        if (!auth_error)
+        {
+            if (lua_isstring(L, 1))
+            {
+                connectOptions.username = ToStringType(lua_tostring(L, 1));
+            }
+            g_Ctx->m_FusionClient->GetRealtimeClient().Connect(connectOptions);
+        }
     }
-    connectOptions.username = (const PhotonCommon::CharType*)username;
-
-    g_Ctx->m_FusionClient->GetRealtimeClient().Connect(connectOptions);
+    // Lua errors use longjmp, so destroy the options before raising an error.
+    if (auth_error)
+    {
+        return luaL_error(L, "%s", auth_error);
+    }
     dmLogInfo("Connect calling connect done");
-
-    // const char* region = dmConfigFile::GetString(g_Ctx->m_ConfigFile, "fusion.default_region", "eu");
-    // if (lua_isstring(L, 2))
-    // {
-    //     region = luaL_checkstring(L, 2);
-    // }
-    // g_Ctx->m_FusionClient->GetRealtimeClient().SelectRegion(ToStringType(region));
 
     return 0;
 }
@@ -3459,6 +3468,67 @@ static void LuaInit(lua_State* L)
      * @field OWNERMODE_GAMEGLOBAL
      */
     SETCONSTANT_NUMBER(OWNERMODE_GAMEGLOBAL, FusionCore::ObjectOwnerModes::GameGlobal)
+
+    /**
+     * No custom authentication (default).
+     * @field AUTH_TYPE_NONE
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_NONE, PhotonMatchmaking::CustomAuthenticationType::None)
+    /**
+     * Custom authentication.
+     * @field AUTH_TYPE_CUSTOM
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_CUSTOM, PhotonMatchmaking::CustomAuthenticationType::Custom)
+    /**
+     * Steam authentication.
+     * @field AUTH_TYPE_STEAM
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_STEAM, PhotonMatchmaking::CustomAuthenticationType::Steam)
+    /**
+     * Facebook authentication.
+     * @field AUTH_TYPE_FACEBOOK
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_FACEBOOK, PhotonMatchmaking::CustomAuthenticationType::Facebook)
+    /**
+     * Oculus authentication.
+     * @field AUTH_TYPE_OCULUS
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_OCULUS, PhotonMatchmaking::CustomAuthenticationType::Oculus)
+    /**
+     * PlayStation4 authentication.
+     * @field AUTH_TYPE_PLAYSTATION4
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_PLAYSTATION4, PhotonMatchmaking::CustomAuthenticationType::PlayStation4)
+    /**
+     * Xbox authentication.
+     * @field AUTH_TYPE_XBOX
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_XBOX, PhotonMatchmaking::CustomAuthenticationType::Xbox)
+    /**
+     * Viveport authentication.
+     * @field AUTH_TYPE_VIVEPORT
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_VIVEPORT, PhotonMatchmaking::CustomAuthenticationType::Viveport)
+    /**
+     * NintendoSwitch authentication.
+     * @field AUTH_TYPE_NINTENDOSWITCH
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_NINTENDOSWITCH, PhotonMatchmaking::CustomAuthenticationType::NintendoSwitch)
+    /**
+     * PlayStation5 authentication.
+     * @field AUTH_TYPE_PLAYSTATION5
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_PLAYSTATION5, PhotonMatchmaking::CustomAuthenticationType::PlayStation5)
+    /**
+     * Epic authentication.
+     * @field AUTH_TYPE_EPIC
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_EPIC, PhotonMatchmaking::CustomAuthenticationType::Epic)
+    /**
+     * FacebookGaming authentication.
+     * @field AUTH_TYPE_FACEBOOKGAMING
+     */
+    SETCONSTANT_NUMBER(AUTH_TYPE_FACEBOOKGAMING, PhotonMatchmaking::CustomAuthenticationType::FacebookGaming)
 
     /**
      * STATE_DISCONNECTED

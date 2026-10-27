@@ -32,6 +32,21 @@
     parameters:
     - name: user
       type: string
+      desc: |
+        Player display name, separate from the authentication user id.
+
+      optional: True
+    - name: auth
+      type: table
+      desc: |
+        Authentication options. Omit or pass nil for anonymous authentication.
+        Optional fields: `type` (a `fusion.AUTH_TYPE_*` constant, defaults to `AUTH_TYPE_NONE`),
+        `user_id` (string), `parameters` (URL-encoded query string without a leading `?`),
+        and `data` (POST data: a string or a table with string keys and string, number or
+        boolean values). An empty table is an empty property map. Nested tables are not
+        supported. Configure the provider and disable anonymous access in the Photon
+        dashboard to require authentication.
+
       optional: True
 
   - name: disconnect
@@ -714,6 +729,66 @@
     type: number
     desc: |
       OWNERMODE_GAMEGLOBAL
+
+  - name: AUTH_TYPE_NONE
+    type: number
+    desc: |
+      No custom authentication (default).
+
+  - name: AUTH_TYPE_CUSTOM
+    type: number
+    desc: |
+      Custom authentication.
+
+  - name: AUTH_TYPE_STEAM
+    type: number
+    desc: |
+      Steam authentication.
+
+  - name: AUTH_TYPE_FACEBOOK
+    type: number
+    desc: |
+      Facebook authentication.
+
+  - name: AUTH_TYPE_OCULUS
+    type: number
+    desc: |
+      Oculus authentication.
+
+  - name: AUTH_TYPE_PLAYSTATION4
+    type: number
+    desc: |
+      PlayStation4 authentication.
+
+  - name: AUTH_TYPE_XBOX
+    type: number
+    desc: |
+      Xbox authentication.
+
+  - name: AUTH_TYPE_VIVEPORT
+    type: number
+    desc: |
+      Viveport authentication.
+
+  - name: AUTH_TYPE_NINTENDOSWITCH
+    type: number
+    desc: |
+      NintendoSwitch authentication.
+
+  - name: AUTH_TYPE_PLAYSTATION5
+    type: number
+    desc: |
+      PlayStation5 authentication.
+
+  - name: AUTH_TYPE_EPIC
+    type: number
+    desc: |
+      Epic authentication.
+
+  - name: AUTH_TYPE_FACEBOOKGAMING
+    type: number
+    desc: |
+      FacebookGaming authentication.
 
   - name: STATE_DISCONNECTED
     type: number
